@@ -2,8 +2,8 @@ apiVersion: v2
 name: otp-inbox
 description: A private inbox for SMS, email, and Bitwarden verification codes
 type: application
-version: 0.2.0
-appVersion: 0.2.0
+version: 0.2.1
+appVersion: 0.2.1
 home: https://github.com/pmh-only/otp
 sources:
   - https://github.com/pmh-only/otp

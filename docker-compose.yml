@@ -1,0 +1,57 @@
+services:
+  otp:
+    build:
+      context: .
+    environment:
+      BITWARDEN_API_URL: http://bitwarden-cli:8087
+      CONNECT_DISCOVERY_URL: ${CONNECT_DISCOVERY_URL:-http://connect-service.connect.svc.cluster.local:8080/.well-known/rostack}
+      CONNECT_ROSTACK_TOKEN: ${CONNECT_ROSTACK_TOKEN:?CONNECT_ROSTACK_TOKEN is required}
+      MAIL_DISCOVERY_URL: ${MAIL_DISCOVERY_URL:-http://mailui.mail.svc.cluster.local:3000/.well-known/rostack}
+      MAIL_ROSTACK_TOKEN: ${MAIL_ROSTACK_TOKEN:?MAIL_ROSTACK_TOKEN is required}
+    ports:
+      - "3000:3000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=1m,mode=1777
+    networks:
+      - default
+      - bitwarden
+    develop:
+      watch:
+        - action: rebuild
+          path: .
+          ignore:
+            - .git/
+            - .env
+            - .playwright-mcp/
+            - Dockerfile.bitwarden
+            - docker-compose.yml
+            - scripts/bitwarden-entrypoint.sh
+
+  bitwarden-cli:
+    build:
+      context: .
+      dockerfile: Dockerfile.bitwarden
+    environment:
+      BW_CLIENTID: ${BW_CLIENTID:?BW_CLIENTID is required}
+      BW_CLIENTSECRET: ${BW_CLIENTSECRET:?BW_CLIENTSECRET is required}
+      BW_SERVER: ${BW_SERVER:-}
+      BITWARDEN_CA_CERT_PEM: ${BITWARDEN_CA_CERT_PEM:-}
+    read_only: true
+    tmpfs:
+      - /data:size=32m,mode=0700,uid=10001,gid=10001
+      - /tmp:size=16m,mode=1777
+    networks:
+      - default
+      - bitwarden
+    restart: unless-stopped
+    develop:
+      watch:
+        - action: rebuild
+          path: Dockerfile.bitwarden
+        - action: rebuild
+          path: scripts/bitwarden-entrypoint.sh
+
+networks:
+  bitwarden:
+    internal: true

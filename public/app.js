@@ -1,23 +1,63 @@
 "use strict";
-const codes = element("#codes");
-const empty = element("#empty");
-const count = element("#count");
+const receivedCodes = element("#received-codes");
+const receivedEmpty = element("#received-empty");
+const receivedCount = element("#received-count");
+const totpCodes = element("#totp-codes");
+const totpEmpty = element("#totp-empty");
+const totpCount = element("#totp-count");
+const allCount = element("#all-count");
+const navReceivedCount = element("#nav-received-count");
+const navTotpCount = element("#nav-totp-count");
 const sources = element("#sources");
 const refresh = element("#refresh");
 const template = element("#code-template");
+const unlock = element("#unlock");
+const masterPassword = element("#master-password");
+const unlockError = element("#unlock-error");
+const search = element("#search");
+const sourceFilter = element("#source-filter");
+const receivedPane = element("#received-pane");
+const totpPane = element("#totp-pane");
+const sessionTime = element("#session-time");
+const toast = element("#toast");
+let snapshot = { items: [], sources: {}, refreshedAt: new Date().toISOString(), privacyLocked: false };
+let activeView = "all";
+let lastActivitySent = Date.now();
+let sessionDeadline = Date.now() + 300_000;
+let toastTimer = 0;
 refresh.addEventListener("click", () => void load(true));
+search.addEventListener("input", render);
+sourceFilter.addEventListener("change", render);
+unlock.addEventListener("submit", event => { event.preventDefault(); void unlockBitwarden(); });
+for (const button of document.querySelectorAll(".nav-item")) {
+    button.addEventListener("click", () => setView(button.dataset.view || "all"));
+}
+document.addEventListener("keydown", event => {
+    if (event.key === "/" && document.activeElement !== search && document.activeElement !== masterPassword) {
+        event.preventDefault();
+        search.focus();
+    }
+    if (event.key === "Escape") {
+        search.value = "";
+        search.blur();
+        render();
+    }
+});
+for (const eventName of ["pointerdown", "keydown", "touchstart", "scroll"])
+    window.addEventListener(eventName, reportActivity, { passive: true });
 void load();
 setInterval(() => void load(), 15_000);
+setInterval(renderSessionTimer, 1_000);
+const events = new EventSource("/api/events");
+events.onmessage = (event) => { snapshot = JSON.parse(event.data); render(); };
 async function load(force = false) {
     refresh.disabled = true;
     try {
-        const response = await fetch(force ? "/api/refresh" : "/api/otps", {
-            method: force ? "POST" : "GET",
-            cache: "no-store",
-        });
+        const response = await fetch(force ? "/api/refresh" : "/api/otps", { method: force ? "POST" : "GET", cache: "no-store" });
         if (!response.ok)
             throw new Error("Unable to load codes");
-        render(await response.json());
+        snapshot = await response.json();
+        render();
     }
     catch (error) {
         sources.textContent = error instanceof Error ? error.message : "Unable to load codes";
@@ -26,17 +66,64 @@ async function load(force = false) {
         refresh.disabled = false;
     }
 }
-function render(data) {
-    count.textContent = String(data.items.length);
-    empty.hidden = data.items.length !== 0;
-    codes.replaceChildren(...data.items.map(renderCode));
-    sources.replaceChildren(...Object.entries(data.sources).map(([name, status]) => {
+function render() {
+    const query = search.value.trim().toLocaleLowerCase();
+    const matches = (item) => !query || `${item.title} ${item.sender} ${item.code}`.toLocaleLowerCase().includes(query);
+    const receivedAll = snapshot.items.filter(item => item.source !== "bitwarden");
+    const totpAll = snapshot.items.filter(item => item.source === "bitwarden");
+    const received = receivedAll.filter(item => (sourceFilter.value === "all" || item.source === sourceFilter.value) && matches(item));
+    const totp = totpAll.filter(matches);
+    receivedCount.textContent = String(received.length);
+    navReceivedCount.textContent = String(receivedAll.length);
+    totpCount.textContent = String(totp.length);
+    navTotpCount.textContent = String(totpAll.length);
+    allCount.textContent = String(snapshot.items.length);
+    receivedEmpty.hidden = received.length !== 0;
+    receivedCodes.replaceChildren(...received.map(renderCode));
+    totpEmpty.hidden = totp.length !== 0;
+    totpCodes.replaceChildren(...totp.map(renderCode));
+    element("#received-empty h3").textContent = snapshot.privacyLocked ? "Workspace locked" : "No received codes";
+    element("#received-empty p").textContent = snapshot.privacyLocked ? "Unlock Bitwarden to view received SMS and mail codes." : "New verification codes from SMS and mail will appear here automatically.";
+    sources.replaceChildren(...Object.entries(snapshot.sources).map(([name, status]) => {
         const badge = document.createElement("span");
         badge.className = status.ok ? "online" : "offline";
-        badge.textContent = `${name} ${status.ok ? "live" : "unavailable"}`;
+        badge.textContent = `${name} ${status.ok ? "connected" : status.requiresUnlock ? "locked" : "offline"}`;
         badge.title = status.error || `Last checked ${relativeTime(status.checkedAt)}`;
         return badge;
     }));
+    unlock.hidden = !snapshot.sources.bitwarden?.requiresUnlock;
+}
+function setView(view) {
+    activeView = view;
+    for (const button of document.querySelectorAll(".nav-item"))
+        button.classList.toggle("active", button.dataset.view === view);
+    receivedPane.hidden = view === "totp";
+    totpPane.hidden = view === "received";
+    document.querySelector(".boards")?.classList.toggle("single", view !== "all");
+    if (activeView !== "all")
+        element(activeView === "received" ? "#received-heading" : "#totp-heading").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+async function unlockBitwarden() {
+    const button = element("button[type='submit']", unlock);
+    button.disabled = true;
+    unlockError.textContent = "";
+    try {
+        const response = await fetch("/api/bitwarden/unlock", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: masterPassword.value }) });
+        masterPassword.value = "";
+        if (!response.ok)
+            throw new Error("Unable to unlock vault. Check your master password.");
+        snapshot = await response.json();
+        sessionDeadline = Date.now() + 300_000;
+        render();
+    }
+    catch (error) {
+        masterPassword.value = "";
+        unlockError.textContent = error instanceof Error ? error.message : "Unable to unlock vault";
+        masterPassword.focus();
+    }
+    finally {
+        button.disabled = false;
+    }
 }
 function renderCode(item) {
     const card = template.content.firstElementChild?.cloneNode(true);
@@ -45,36 +132,24 @@ function renderCode(item) {
     element(".source", card).textContent = item.source;
     const time = element("time", card);
     time.dateTime = item.receivedAt;
-    time.textContent = relativeTime(item.receivedAt);
-    element("h2", card).textContent = item.title;
+    time.textContent = item.expiresAt ? countdown(item.expiresAt) : relativeTime(item.receivedAt);
+    element("h3", card).textContent = item.title;
     element(".sender", card).textContent = item.sender;
-    const button = element(".code", card);
-    button.textContent = item.code;
-    button.addEventListener("click", async () => {
-        await navigator.clipboard.writeText(item.code);
-        card.classList.add("just-copied");
-        setTimeout(() => card.classList.remove("just-copied"), 1200);
-    });
+    element(".code-value", card).textContent = item.code;
+    const copy = async () => { await navigator.clipboard.writeText(item.code); showToast(`${item.code} copied`); };
+    element(".code", card).addEventListener("click", copy);
+    element(".copy-button", card).addEventListener("click", copy);
     return card;
 }
-function relativeTime(value) {
-    if (!value)
-        return "never";
-    const seconds = Math.round((Date.parse(value) - Date.now()) / 1000);
-    const formatter = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
-    if (Math.abs(seconds) < 60)
-        return formatter.format(seconds, "second");
-    const minutes = Math.round(seconds / 60);
-    if (Math.abs(minutes) < 60)
-        return formatter.format(minutes, "minute");
-    const hours = Math.round(minutes / 60);
-    if (Math.abs(hours) < 24)
-        return formatter.format(hours, "hour");
-    return formatter.format(Math.round(hours / 24), "day");
-}
-function element(selector, root = document) {
-    const value = root.querySelector(selector);
-    if (!value)
-        throw new Error(`Missing element: ${selector}`);
-    return value;
-}
+function reportActivity() { const now = Date.now(); sessionDeadline = now + 300_000; if (now - lastActivitySent < 30_000)
+    return; lastActivitySent = now; void fetch("/api/activity", { method: "POST", keepalive: true }); }
+function renderSessionTimer() { const seconds = Math.max(0, Math.ceil((sessionDeadline - Date.now()) / 1000)); sessionTime.textContent = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`; }
+function showToast(message) { toast.textContent = message; toast.classList.add("visible"); clearTimeout(toastTimer); toastTimer = window.setTimeout(() => toast.classList.remove("visible"), 1500); }
+function countdown(value) { return `${Math.max(0, Math.ceil((Date.parse(value) - Date.now()) / 1000))}s`; }
+function relativeTime(value) { if (!value)
+    return "never"; const seconds = Math.round((Date.parse(value) - Date.now()) / 1000); const formatter = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" }); if (Math.abs(seconds) < 60)
+    return formatter.format(seconds, "second"); const minutes = Math.round(seconds / 60); if (Math.abs(minutes) < 60)
+    return formatter.format(minutes, "minute"); const hours = Math.round(minutes / 60); if (Math.abs(hours) < 24)
+    return formatter.format(hours, "hour"); return formatter.format(Math.round(hours / 24), "day"); }
+function element(selector, root = document) { const value = root.querySelector(selector); if (!value)
+    throw new Error(`Missing element: ${selector}`); return value; }

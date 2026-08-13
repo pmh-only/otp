@@ -3,40 +3,122 @@
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#10100f">
+    <meta name="theme-color" content="#0b0c0c">
     <title>Code Relay</title>
     <link rel="icon" href="data:,">
     <link rel="stylesheet" href="/styles.css">
     <script type="module" src="/app.js"></script>
   </head>
   <body>
-    <main>
-      <header>
-        <div>
-          <p class="eyebrow">Private verification inbox</p>
-          <h1>Code <i>Relay</i></h1>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="Code Relay home">
+          <span class="brand-mark">CR</span>
+          <span><b>Code Relay</b><small>Private verification workspace</small></span>
+        </a>
+        <div class="topbar-actions">
+          <div class="privacy-state"><span></span><b>Ephemeral session</b><small id="session-time">5:00</small></div>
+          <button id="refresh" class="icon-button" type="button" title="Refresh all sources" aria-label="Refresh all sources">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5m-5 4a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5"/></svg>
+          </button>
         </div>
-        <button id="refresh" type="button"><span></span> Refresh</button>
       </header>
 
-      <section class="status" aria-label="Source status">
-        <p><b id="count">0</b> active codes</p>
-        <div id="sources"></div>
-      </section>
+      <aside class="sidebar">
+        <nav aria-label="Workspace">
+          <p class="nav-label">Workspace</p>
+          <button class="nav-item active" type="button" data-view="all"><span class="nav-icon">⌁</span>All codes <b id="all-count">0</b></button>
+          <button class="nav-item" type="button" data-view="received"><span class="nav-icon">↓</span>Received <b id="nav-received-count">0</b></button>
+          <button class="nav-item" type="button" data-view="totp"><span class="nav-icon">◌</span>Authenticator <b id="nav-totp-count">0</b></button>
+        </nav>
+        <div class="source-panel">
+          <p class="nav-label">Connections</p>
+          <div id="sources"></div>
+        </div>
+        <div class="privacy-note">
+          <span>Session privacy</span>
+          <p>Codes are held in memory only and erased after 5 minutes of inactivity.</p>
+        </div>
+      </aside>
 
-      <section id="codes" class="codes" aria-live="polite"></section>
-      <p id="empty" class="empty" hidden>No recent verification codes found.</p>
-    </main>
+      <main class="workspace">
+        <section class="workspace-head">
+          <div>
+            <p class="eyebrow">Live code center</p>
+            <h1>Verification <i>inbox</i></h1>
+            <p class="lede">One secure view for codes arriving by message and codes generated from your vault.</p>
+          </div>
+          <div class="toolbar">
+            <label class="search">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+              <span class="sr-only">Search codes</span>
+              <input id="search" type="search" placeholder="Search sender or service" autocomplete="off">
+              <kbd>/</kbd>
+            </label>
+            <label class="source-filter">
+              <span class="sr-only">Filter received source</span>
+              <select id="source-filter">
+                <option value="all">All received</option>
+                <option value="sms">SMS only</option>
+                <option value="mail">Mail only</option>
+              </select>
+            </label>
+          </div>
+        </section>
+
+        <form id="unlock" class="unlock" hidden>
+          <div class="unlock-icon">⌾</div>
+          <div>
+            <p class="eyebrow">Bitwarden vault locked</p>
+            <h2>Unlock your authenticator</h2>
+            <p>Your password is sent once to the local vault sidecar and never stored.</p>
+          </div>
+          <label>
+            <span>Master password</span>
+            <input id="master-password" name="password" type="password" autocomplete="current-password" required>
+          </label>
+          <button type="submit">Unlock vault</button>
+          <p id="unlock-error" role="alert"></p>
+        </form>
+
+        <div class="boards">
+          <section id="received-pane" class="board" aria-labelledby="received-heading">
+            <div class="board-head">
+              <div class="board-title">
+                <span class="board-symbol received-symbol">↓</span>
+                <div><p>Messages</p><h2 id="received-heading">Received OTP</h2></div>
+              </div>
+              <span class="board-count"><b id="received-count">0</b> available</span>
+            </div>
+            <div id="received-codes" class="codes" aria-live="polite"></div>
+            <div id="received-empty" class="empty" hidden><span>↓</span><h3>No received codes</h3><p>New verification codes from SMS and mail will appear here automatically.</p></div>
+          </section>
+
+          <section id="totp-pane" class="board authenticator" aria-labelledby="totp-heading">
+            <div class="board-head">
+              <div class="board-title">
+                <span class="board-symbol totp-symbol">◌</span>
+                <div><p>Vault</p><h2 id="totp-heading">Bitwarden TOTP</h2></div>
+              </div>
+              <span class="board-count"><b id="totp-count">0</b> available</span>
+            </div>
+            <div id="totp-codes" class="codes" aria-live="polite"></div>
+            <div id="totp-empty" class="empty" hidden><span>◌</span><h3>No authenticator codes</h3><p>Unlock Bitwarden to display live TOTP codes from your vault.</p></div>
+          </section>
+        </div>
+      </main>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite">Code copied</div>
     <template id="code-template">
       <article class="code-card">
         <div class="card-top">
           <span class="source"></span>
           <time></time>
         </div>
-        <button class="code" type="button" title="Copy code"></button>
-        <h2></h2>
-        <p class="sender"></p>
-        <p class="copied" role="status">Copied</p>
+        <button class="code" type="button" title="Copy code"><span class="code-value"></span><span class="copy-icon">⧉</span></button>
+        <div class="code-meta"><h3></h3><p class="sender"></p></div>
+        <button class="copy-button" type="button">Copy code</button>
       </article>
     </template>
   </body>

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,13 +22,16 @@ import (
 var publicFiles embed.FS
 
 type config struct {
-	Port         int
-	PollInterval time.Duration
-	MaxAge       time.Duration
-	ConnectURL   string
-	ConnectToken string
-	MailURL      string
-	MailToken    string
+	Port              int
+	PollInterval      time.Duration
+	MaxAge            time.Duration
+	ConnectURL        string
+	ConnectToken      string
+	MailURL           string
+	MailToken         string
+	BitwardenURL      string
+	BitwardenToken    string
+	InactivityTimeout time.Duration
 }
 
 type representation struct {
@@ -61,34 +65,42 @@ type rostackSource struct {
 }
 
 type otpItem struct {
-	ID         string    `json:"id"`
-	Code       string    `json:"code"`
-	Source     string    `json:"source"`
-	Sender     string    `json:"sender"`
-	Title      string    `json:"title"`
-	ReceivedAt time.Time `json:"receivedAt"`
+	ID         string     `json:"id"`
+	Code       string     `json:"code"`
+	Source     string     `json:"source"`
+	Sender     string     `json:"sender"`
+	Title      string     `json:"title"`
+	ReceivedAt time.Time  `json:"receivedAt"`
+	ExpiresAt  *time.Time `json:"expiresAt,omitempty"`
 }
 
 type sourceStatus struct {
-	OK        bool       `json:"ok"`
-	CheckedAt *time.Time `json:"checkedAt"`
-	Error     string     `json:"error,omitempty"`
+	OK             bool       `json:"ok"`
+	CheckedAt      *time.Time `json:"checkedAt"`
+	Error          string     `json:"error,omitempty"`
+	RequiresUnlock bool       `json:"requiresUnlock,omitempty"`
 }
 
 type snapshot struct {
-	Items       []otpItem               `json:"items"`
-	Sources     map[string]sourceStatus `json:"sources"`
-	RefreshedAt time.Time               `json:"refreshedAt"`
+	Items         []otpItem               `json:"items"`
+	Sources       map[string]sourceStatus `json:"sources"`
+	RefreshedAt   time.Time               `json:"refreshedAt"`
+	PrivacyLocked bool                    `json:"privacyLocked"`
 }
 
 type store struct {
-	mu         sync.RWMutex
-	refreshMu  sync.Mutex
-	items      []otpItem
-	status     map[string]sourceStatus
-	maxAge     time.Duration
-	smsSource  *rostackSource
-	mailSource *rostackSource
+	mu                sync.RWMutex
+	refreshMu         sync.Mutex
+	items             []otpItem
+	status            map[string]sourceStatus
+	maxAge            time.Duration
+	smsSource         *rostackSource
+	mailSource        *rostackSource
+	bitwardenSource   *bitwardenSource
+	totpItems         []totpItem
+	inactivityTimeout time.Duration
+	lastActivity      time.Time
+	privacyLocked     bool
 }
 
 func main() {
@@ -102,10 +114,20 @@ func main() {
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	store := &store{
-		maxAge:     cfg.MaxAge,
-		status:     map[string]sourceStatus{"sms": {}, "mail": {}},
-		smsSource:  &rostackSource{discoveryURL: cfg.ConnectURL, token: cfg.ConnectToken, resourceName: "sms-messages", client: client},
-		mailSource: &rostackSource{discoveryURL: cfg.MailURL, token: cfg.MailToken, resourceName: "mailbox-entries", client: client},
+		maxAge:            cfg.MaxAge,
+		status:            map[string]sourceStatus{"sms": {}, "mail": {}, "bitwarden": {}},
+		smsSource:         &rostackSource{discoveryURL: cfg.ConnectURL, token: cfg.ConnectToken, resourceName: "sms-messages", client: client},
+		mailSource:        &rostackSource{discoveryURL: cfg.MailURL, token: cfg.MailToken, resourceName: "mailbox-entries", client: client},
+		inactivityTimeout: cfg.InactivityTimeout,
+		lastActivity:      time.Now().UTC(),
+	}
+	if cfg.BitwardenURL != "" {
+		store.bitwardenSource = &bitwardenSource{baseURL: cfg.BitwardenURL, token: cfg.BitwardenToken, client: client}
+		store.privacyLocked = true
+		checkedAt := time.Now().UTC()
+		store.status["bitwarden"] = sourceStatus{CheckedAt: &checkedAt, Error: errBitwardenLocked.Error(), RequiresUnlock: true}
+	} else {
+		delete(store.status, "bitwarden")
 	}
 	store.refresh(context.Background())
 	go func() {
@@ -113,6 +135,13 @@ func main() {
 		defer ticker.Stop()
 		for range ticker.C {
 			store.refresh(context.Background())
+		}
+	}()
+	go func() {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			store.expireInactive(context.Background(), time.Now().UTC())
 		}
 	}()
 
@@ -124,7 +153,35 @@ func main() {
 	mux.HandleFunc("GET /api/otps", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, store.snapshot())
 	})
+	mux.HandleFunc("GET /api/events", func(w http.ResponseWriter, r *http.Request) {
+		streamSnapshots(w, r, store)
+	})
 	mux.HandleFunc("POST /api/refresh", func(w http.ResponseWriter, r *http.Request) {
+		store.refresh(r.Context())
+		writeJSON(w, http.StatusOK, store.snapshot())
+	})
+	mux.HandleFunc("POST /api/activity", func(w http.ResponseWriter, _ *http.Request) {
+		store.recordActivity(time.Now().UTC())
+		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("POST /api/bitwarden/unlock", func(w http.ResponseWriter, r *http.Request) {
+		if store.bitwardenSource == nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "Bitwarden is not configured"})
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+		var input struct {
+			Password string `json:"password"`
+		}
+		if r.Header.Get("Content-Type") != "application/json" || json.NewDecoder(r.Body).Decode(&input) != nil || input.Password == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Master password is required"})
+			return
+		}
+		if err := store.bitwardenSource.unlock(r.Context(), input.Password); err != nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Unable to unlock vault"})
+			return
+		}
+		store.unlockPrivacy(time.Now().UTC())
 		store.refresh(r.Context())
 		writeJSON(w, http.StatusOK, store.snapshot())
 	})
@@ -212,11 +269,21 @@ func (s *store) refresh(ctx context.Context) {
 	s.refreshMu.Lock()
 	defer s.refreshMu.Unlock()
 	var wait sync.WaitGroup
-	wait.Add(2)
+	count := 2
+	if s.bitwardenSource != nil {
+		count++
+	}
+	wait.Add(count)
 	go func() {
 		defer wait.Done()
 		s.refreshSource(ctx, "sms", s.smsSource, normalizeSMS)
 	}()
+	if s.bitwardenSource != nil {
+		go func() {
+			defer wait.Done()
+			s.refreshBitwarden(ctx)
+		}()
+	}
 	go func() {
 		defer wait.Done()
 		s.refreshSource(ctx, "mail", s.mailSource, normalizeMail)
@@ -229,6 +296,9 @@ func (s *store) refreshSource(ctx context.Context, name string, source *rostackS
 	records, err := source.list(ctx)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.privacyLocked {
+		return
+	}
 	if err != nil {
 		s.status[name] = sourceStatus{CheckedAt: &checkedAt, Error: err.Error()}
 		return
@@ -249,6 +319,18 @@ func (s *store) snapshot() snapshot {
 	defer s.mu.Unlock()
 	s.pruneLocked()
 	items := append([]otpItem(nil), s.items...)
+	for _, item := range s.totpItems {
+		items = append(items, item.code(time.Now().UTC()))
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Source == "bitwarden" && items[j].Source != "bitwarden" {
+			return true
+		}
+		if items[j].Source == "bitwarden" && items[i].Source != "bitwarden" {
+			return false
+		}
+		return items[i].ReceivedAt.After(items[j].ReceivedAt)
+	})
 	if items == nil {
 		items = []otpItem{}
 	}
@@ -256,7 +338,46 @@ func (s *store) snapshot() snapshot {
 	for name, status := range s.status {
 		statuses[name] = status
 	}
-	return snapshot{Items: items, Sources: statuses, RefreshedAt: time.Now().UTC()}
+	return snapshot{Items: items, Sources: statuses, RefreshedAt: time.Now().UTC(), PrivacyLocked: s.privacyLocked}
+}
+
+func (s *store) recordActivity(at time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.privacyLocked && s.bitwardenSource != nil {
+		return
+	}
+	s.privacyLocked = false
+	s.lastActivity = at
+}
+
+func (s *store) unlockPrivacy(at time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.privacyLocked = false
+	s.lastActivity = at
+}
+
+func (s *store) expireInactive(ctx context.Context, now time.Time) {
+	s.mu.Lock()
+	if s.privacyLocked || now.Sub(s.lastActivity) < s.inactivityTimeout {
+		s.mu.Unlock()
+		return
+	}
+	s.privacyLocked = true
+	s.items = nil
+	s.totpItems = nil
+	if _, ok := s.status["bitwarden"]; ok {
+		checkedAt := now.UTC()
+		s.status["bitwarden"] = sourceStatus{CheckedAt: &checkedAt, Error: errBitwardenLocked.Error(), RequiresUnlock: true}
+	}
+	s.mu.Unlock()
+
+	if s.bitwardenSource != nil {
+		if err := s.bitwardenSource.lock(ctx); err != nil {
+			log.Printf("Bitwarden lock failed: %v", err)
+		}
+	}
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
@@ -265,6 +386,34 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(value); err != nil {
 		log.Printf("encode response: %v", err)
+	}
+}
+
+func streamSnapshots(w http.ResponseWriter, r *http.Request, store *store) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Connection", "keep-alive")
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		payload, err := json.Marshal(store.snapshot())
+		if err != nil {
+			return
+		}
+		if _, err := fmt.Fprintf(w, "data: %s\n\n", payload); err != nil {
+			return
+		}
+		flusher.Flush()
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+		}
 	}
 }
 
@@ -289,6 +438,10 @@ func readConfig() (config, error) {
 	if err != nil {
 		return config{}, err
 	}
+	inactivity, err := positiveInt("INACTIVITY_TIMEOUT_MS", 300000)
+	if err != nil {
+		return config{}, err
+	}
 	connectToken, err := requiredEnv("CONNECT_ROSTACK_TOKEN")
 	if err != nil {
 		return config{}, err
@@ -297,10 +450,14 @@ func readConfig() (config, error) {
 	if err != nil {
 		return config{}, err
 	}
+	bitwardenURL := strings.TrimRight(os.Getenv("BITWARDEN_API_URL"), "/")
+	bitwardenToken := os.Getenv("BITWARDEN_API_TOKEN")
 	return config{
 		Port: port, PollInterval: time.Duration(poll) * time.Millisecond, MaxAge: time.Duration(maxAge) * time.Millisecond,
 		ConnectURL: envOr("CONNECT_DISCOVERY_URL", "http://connect-service.connect.svc.cluster.local:8080/.well-known/rostack"), ConnectToken: connectToken,
 		MailURL: envOr("MAIL_DISCOVERY_URL", "http://mailui.mail.svc.cluster.local:3000/.well-known/rostack"), MailToken: mailToken,
+		BitwardenURL: bitwardenURL, BitwardenToken: bitwardenToken,
+		InactivityTimeout: time.Duration(inactivity) * time.Millisecond,
 	}, nil
 }
 

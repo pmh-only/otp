@@ -54,10 +54,16 @@ jobs:
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
 
       - name: Lint Helm chart
-        run: >-
-          helm lint charts/otp
-          --set secrets.connectRostackToken=lint
-          --set secrets.mailRostackToken=lint
+        run: |
+          helm lint charts/otp \
+            --set secrets.connectRostackToken=lint \
+            --set secrets.mailRostackToken=lint
+          helm lint charts/otp \
+            --set secrets.connectRostackToken=lint \
+            --set secrets.mailRostackToken=lint \
+            --set bitwarden.enabled=true \
+            --set secrets.bitwardenClientId=lint \
+            --set secrets.bitwardenClientSecret=lint
 
       - name: Cross-compile Linux binaries
         run: |
@@ -131,3 +137,26 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=otp-image
           cache-to: type=gha,mode=max,scope=otp-image
+
+      - name: Generate Bitwarden image metadata
+        id: bitwarden-meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ steps.image.outputs.name }}-bitwarden-cli
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and publish Bitwarden image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: Dockerfile.bitwarden
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.bitwarden-meta.outputs.tags }}
+          labels: ${{ steps.bitwarden-meta.outputs.labels }}
+          cache-from: type=gha,scope=bitwarden-image
+          cache-to: type=gha,mode=max,scope=bitwarden-image

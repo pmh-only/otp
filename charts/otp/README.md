@@ -17,6 +17,22 @@ helm upgrade --install otp otp-inbox/otp-inbox \
 
 Alternatively, set `secrets.connectRostackToken` and `secrets.mailRostackToken` to let Helm create the Secret. Prefer an existing Secret in production so credentials are not stored in Helm release values.
 
+## Bitwarden
+
+Enable the chart-managed Bitwarden CLI sidecar and provide its personal API key through the same Secret:
+
+```yaml
+bitwarden:
+  enabled: true
+
+secrets:
+  existingSecret: otp-secrets
+```
+
+The Secret must additionally contain `BW_CLIENTID` and `BW_CLIENTSECRET`. When Helm creates the Secret instead, set `secrets.bitwardenClientId` and `secrets.bitwardenClientSecret`. Sealed Secret users must provide encrypted `BW_CLIENTID` and `BW_CLIENTSECRET` entries. Set `bitwarden.server` for a self-hosted HTTPS server and `bitwarden.caCertPem` when it uses a private CA.
+
+The sidecar defaults to `ghcr.io/pmh-only/otp-bitwarden-cli` with the chart app version. Override `bitwarden.image.repository` or `bitwarden.image.tag` when publishing the image elsewhere. Leave `bitwarden.enabled` false and set `config.bitwardenApiUrl` to continue using an externally managed `bw serve` endpoint.
+
 ## Sealed Secrets
 
 To let the chart create a Bitnami `SealedSecret`, provide values encrypted with `kubeseal --raw`. The default strict scope binds ciphertext to both the Helm release's generated Secret name and its namespace:

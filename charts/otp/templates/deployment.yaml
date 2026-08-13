@@ -52,9 +52,14 @@ spec:
               value: {{ .Values.config.otpMaxAgeMs | int64 | quote }}
             - name: INACTIVITY_TIMEOUT_MS
               value: {{ .Values.config.inactivityTimeoutMs | int64 | quote }}
+            {{- if .Values.bitwarden.enabled }}
+            - name: BITWARDEN_API_URL
+              value: http://127.0.0.1:8087
+            {{- else }}
             {{- with .Values.config.bitwardenApiUrl }}
             - name: BITWARDEN_API_URL
               value: {{ . | quote }}
+            {{- end }}
             {{- end }}
             - name: CONNECT_ROSTACK_TOKEN
               valueFrom:
@@ -66,7 +71,7 @@ spec:
                 secretKeyRef:
                   name: {{ include "otp.secretName" . }}
                   key: MAIL_ROSTACK_TOKEN
-            {{- if .Values.config.bitwardenApiUrl }}
+            {{- if or .Values.bitwarden.enabled .Values.config.bitwardenApiUrl }}
             - name: BITWARDEN_API_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -84,6 +89,54 @@ spec:
             {{- toYaml .Values.readinessProbe | nindent 12 }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+        {{- if .Values.bitwarden.enabled }}
+        - name: bitwarden-cli
+          securityContext:
+            {{- toYaml .Values.bitwarden.securityContext | nindent 12 }}
+          image: "{{ .Values.bitwarden.image.repository }}:{{ default (printf "v%s" .Chart.AppVersion) .Values.bitwarden.image.tag }}"
+          imagePullPolicy: {{ .Values.bitwarden.image.pullPolicy }}
+          env:
+            - name: BW_CLIENTID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "otp.secretName" . }}
+                  key: BW_CLIENTID
+            - name: BW_CLIENTSECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "otp.secretName" . }}
+                  key: BW_CLIENTSECRET
+            {{- with .Values.bitwarden.server }}
+            - name: BW_SERVER
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.bitwarden.caCertPem }}
+            - name: BITWARDEN_CA_CERT_PEM
+              value: {{ . | quote }}
+            {{- end }}
+          ports:
+            - name: bitwarden
+              containerPort: 8087
+              protocol: TCP
+          resources:
+            {{- toYaml .Values.bitwarden.resources | nindent 12 }}
+          volumeMounts:
+            - name: bitwarden-data
+              mountPath: /data
+            - name: bitwarden-tmp
+              mountPath: /tmp
+        {{- end }}
+      {{- if .Values.bitwarden.enabled }}
+      volumes:
+        - name: bitwarden-data
+          emptyDir:
+            medium: Memory
+            sizeLimit: 32Mi
+        - name: bitwarden-tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi
+      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

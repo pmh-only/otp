@@ -67,11 +67,32 @@ config:
   inactivityTimeoutMs: 300000
   bitwardenApiUrl: ""
 
+bitwarden:
+  enabled: false
+  image:
+    repository: ghcr.io/pmh-only/otp-bitwarden-cli
+    pullPolicy: IfNotPresent
+    tag: ""
+  server: ""
+  caCertPem: ""
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+  resources: {}
+
 secrets:
   existingSecret: ""
   connectRostackToken: ""
   mailRostackToken: ""
   bitwardenApiToken: ""
+  bitwardenClientId: ""
+  bitwardenClientSecret: ""
 
 sealedSecret:
   enabled: false
@@ -80,6 +101,8 @@ sealedSecret:
     CONNECT_ROSTACK_TOKEN: ""
     MAIL_ROSTACK_TOKEN: ""
     BITWARDEN_API_TOKEN: ""
+    BW_CLIENTID: ""
+    BW_CLIENTSECRET: ""
 
 resources: {}
 

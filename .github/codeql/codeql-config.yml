@@ -1,0 +1,8 @@
+name: OTP Inbox CodeQL configuration
+
+queries:
+  - uses: security-extended
+
+paths-ignore:
+  - public/app.js
+  - test

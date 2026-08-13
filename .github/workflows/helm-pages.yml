@@ -2,7 +2,7 @@ name: Helm repository
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["v*", "*-v*"]
   workflow_dispatch:
 
 concurrency:
@@ -39,7 +39,7 @@ jobs:
             mkdir -p /tmp/charts/otp
             git archive "${tag}" charts/otp | tar -x -C /tmp/charts/otp --strip-components=2
             helm package /tmp/charts/otp -d _site
-          done < <(git tag --list 'v*' --sort=version:refname)
+          done < <(git tag --list 'v*' '*-v*' --sort=version:refname)
 
           test -n "$(find _site -maxdepth 1 -name '*.tgz' -print -quit)"
           helm repo index _site --url "https://${GITHUB_REPOSITORY_OWNER,,}.github.io/${GITHUB_REPOSITORY#*/}"

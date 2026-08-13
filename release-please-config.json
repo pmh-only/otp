@@ -3,6 +3,7 @@
     ".": {
       "release-type": "simple",
       "package-name": "otp-inbox",
+      "include-component-in-tag": false,
       "extra-files": [
         {
           "type": "yaml",

@@ -1,0 +1,35 @@
+@import url("https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;600;700&family=Newsreader:ital,opsz,wght@1,6..72,500&display=swap");
+
+:root { color-scheme: dark; font-family: "Manrope", sans-serif; background: #10100f; color: #f1eee6; }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; background: radial-gradient(circle at 15% 0%, #29251d 0, transparent 34rem), #10100f; }
+body::before { content: ""; position: fixed; inset: 0; pointer-events: none; opacity: .18; background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 160 160' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.25'/%3E%3C/svg%3E"); }
+main { width: min(1100px, calc(100% - 40px)); margin: auto; padding: 72px 0; }
+header { display: flex; align-items: end; justify-content: space-between; border-bottom: 1px solid #393832; padding-bottom: 28px; }
+.eyebrow { margin: 0 0 12px; color: #b4ae9f; text-transform: uppercase; letter-spacing: .18em; font: 500 11px "DM Mono", monospace; }
+h1 { margin: 0; font-size: clamp(48px, 8vw, 88px); letter-spacing: -.07em; line-height: .85; }
+h1 i { color: #d9ff64; font-family: "Newsreader", serif; font-weight: 500; }
+button { color: inherit; font: inherit; }
+#refresh { border: 1px solid #4c4a42; border-radius: 999px; padding: 11px 17px; background: #181816; cursor: pointer; }
+#refresh span { display: inline-block; width: 7px; height: 7px; margin-right: 8px; border-radius: 50%; background: #d9ff64; box-shadow: 0 0 12px #d9ff64; }
+#refresh:disabled { opacity: .5; }
+.status { display: flex; justify-content: space-between; align-items: center; padding: 24px 2px 38px; color: #9b978e; font-size: 13px; }
+.status p { margin: 0; }
+.status b { color: #f1eee6; }
+#sources { display: flex; gap: 18px; font: 400 11px "DM Mono", monospace; text-transform: uppercase; }
+#sources span::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 7px; border-radius: 50%; background: #d9ff64; }
+#sources .offline::before { background: #ff755f; }
+.codes { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+.code-card { position: relative; min-height: 270px; padding: 24px; overflow: hidden; border: 1px solid #35342f; border-radius: 5px; background: rgba(27, 27, 24, .82); transition: border-color .2s, transform .2s; }
+.code-card:hover { border-color: #646156; transform: translateY(-2px); }
+.card-top { display: flex; justify-content: space-between; color: #8e8a80; font: 500 10px "DM Mono", monospace; text-transform: uppercase; letter-spacing: .12em; }
+.source { color: #d9ff64; }
+.code { display: block; margin: 49px 0 34px; padding: 0; border: 0; background: transparent; font: 500 clamp(39px, 6vw, 66px) "DM Mono", monospace; letter-spacing: .12em; cursor: copy; }
+.code::after { content: "copy"; vertical-align: middle; margin-left: 15px; color: #77746c; font: 400 9px "DM Mono", monospace; letter-spacing: .1em; text-transform: uppercase; opacity: 0; transition: opacity .2s; }
+.code:hover::after { opacity: 1; }
+.code-card h2 { max-width: 85%; overflow: hidden; margin: 0 0 6px; font-size: 14px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.sender { margin: 0; overflow: hidden; color: #88847a; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.copied { position: absolute; right: 20px; bottom: 18px; margin: 0; color: #d9ff64; font: 500 10px "DM Mono", monospace; text-transform: uppercase; opacity: 0; transition: opacity .2s; }
+.just-copied .copied { opacity: 1; }
+.empty { padding: 80px 0; border: 1px dashed #393832; color: #8e8a80; text-align: center; }
+@media (max-width: 680px) { main { width: min(100% - 24px, 520px); padding: 40px 0; } header { align-items: start; } #refresh { padding: 9px 13px; } .status { align-items: start; gap: 16px; } #sources { flex-direction: column; gap: 6px; } .codes { grid-template-columns: 1fr; } .code-card { min-height: 240px; } }

@@ -1,0 +1,5 @@
+.git
+.env
+.playwright-mcp
+node_modules
+public/app.js

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#10100f">
+    <title>Code Relay</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="/styles.css">
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <p class="eyebrow">Private verification inbox</p>
+          <h1>Code <i>Relay</i></h1>
+        </div>
+        <button id="refresh" type="button"><span></span> Refresh</button>
+      </header>
+
+      <section class="status" aria-label="Source status">
+        <p><b id="count">0</b> active codes</p>
+        <div id="sources"></div>
+      </section>
+
+      <section id="codes" class="codes" aria-live="polite"></section>
+      <p id="empty" class="empty" hidden>No recent verification codes found.</p>
+    </main>
+    <template id="code-template">
+      <article class="code-card">
+        <div class="card-top">
+          <span class="source"></span>
+          <time></time>
+        </div>
+        <button class="code" type="button" title="Copy code"></button>
+        <h2></h2>
+        <p class="sender"></p>
+        <p class="copied" role="status">Copied</p>
+      </article>
+    </template>
+  </body>
+</html>

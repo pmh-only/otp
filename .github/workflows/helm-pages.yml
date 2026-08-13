@@ -1,8 +1,10 @@
 name: Helm repository
 
 on:
-  push:
-    tags: ["v*", "*-v*"]
+  workflow_run:
+    workflows: ["Release Please"]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -15,6 +17,7 @@ permissions:
 jobs:
   build:
     name: Build chart repository
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository and tags

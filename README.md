@@ -83,3 +83,17 @@ When Bitwarden is configured, its master-password unlock protects the entire wor
 Each browser tab creates a random capability in `sessionStorage`. The backend authorizes only the tab that submitted the successful master-password unlock and requires that capability on snapshots, refreshes, activity reports, and realtime streams. Other tabs and browsers remain locked and receive no OTP or TOTP data even while the shared Bitwarden sidecar process is unlocked. Closing the tab discards its capability.
 
 Run backend tests with `go test ./...`. The Docker build compiles both TypeScript and Go and produces a minimal runtime image containing only the application binary and CA certificates.
+
+## Helm
+
+Released charts are published through GitHub Pages:
+
+```sh
+helm repo add otp-inbox https://pmh-only.github.io/otp
+helm repo update
+helm upgrade --install otp otp-inbox/otp-inbox \
+  --namespace otp --create-namespace \
+  --set secrets.existingSecret=otp-rostack
+```
+
+The referenced Secret must contain `CONNECT_ROSTACK_TOKEN` and `MAIL_ROSTACK_TOKEN`. See [`charts/otp/README.md`](charts/otp/README.md) for chart configuration details.

@@ -1,0 +1,15 @@
+1. Get the OTP Inbox URL:
+{{- if .Values.gatewayApi.enabled }}
+{{- range .Values.gatewayApi.hostnames }}
+  https://{{ . }}
+{{- end }}
+{{- else if .Values.ingress.enabled }}
+{{- range .Values.ingress.hosts }}
+  {{- range .paths }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}{{ .path }}
+  {{- end }}
+{{- end }}
+{{- else }}
+  kubectl -n {{ .Release.Namespace }} port-forward service/{{ include "otp.fullname" . }} 3000:{{ .Values.service.port }}
+  http://127.0.0.1:3000
+{{- end }}

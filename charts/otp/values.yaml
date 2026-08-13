@@ -1,0 +1,102 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/pmh-only/otp
+  pullPolicy: IfNotPresent
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+
+service:
+  type: ClusterIP
+  port: 3000
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: otp.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+gatewayApi:
+  enabled: false
+  annotations: {}
+  parentRefs: []
+  hostnames:
+    - otp.example.com
+  matches:
+    - path:
+        type: PathPrefix
+        value: /
+  filters: []
+
+config:
+  connectDiscoveryUrl: http://connect-service.connect.svc.cluster.local:8080/.well-known/rostack
+  mailDiscoveryUrl: http://mailui.mail.svc.cluster.local:3000/.well-known/rostack
+  pollIntervalMs: 15000
+  otpMaxAgeMs: 86400000
+  inactivityTimeoutMs: 300000
+  bitwardenApiUrl: ""
+
+secrets:
+  existingSecret: ""
+  connectRostackToken: ""
+  mailRostackToken: ""
+  bitwardenApiToken: ""
+
+sealedSecret:
+  enabled: false
+  annotations: {}
+  encryptedData:
+    CONNECT_ROSTACK_TOKEN: ""
+    MAIL_ROSTACK_TOKEN: ""
+    BITWARDEN_API_TOKEN: ""
+
+resources: {}
+
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+readinessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 2
+  periodSeconds: 5
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

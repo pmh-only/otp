@@ -1,0 +1,9 @@
+FROM alpine:3.22 AS certificates
+
+FROM scratch
+ARG TARGETARCH
+COPY --from=certificates /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --chmod=755 dist/linux/${TARGETARCH}/otp-inbox /otp-inbox
+USER 65532:65532
+EXPOSE 3000
+ENTRYPOINT ["/otp-inbox"]

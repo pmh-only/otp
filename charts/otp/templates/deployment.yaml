@@ -1,0 +1,98 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "otp.fullname" . }}
+  labels:
+    {{- include "otp.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "otp.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        checksum/sealed-secret: {{ include (print $.Template.BasePath "/sealedsecret.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "otp.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      automountServiceAccountToken: false
+      serviceAccountName: {{ include "otp.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: otp-inbox
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ default (printf "v%s" .Chart.AppVersion) .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: PORT
+              value: "3000"
+            - name: CONNECT_DISCOVERY_URL
+              value: {{ .Values.config.connectDiscoveryUrl | quote }}
+            - name: MAIL_DISCOVERY_URL
+              value: {{ .Values.config.mailDiscoveryUrl | quote }}
+            - name: POLL_INTERVAL_MS
+              value: {{ .Values.config.pollIntervalMs | int64 | quote }}
+            - name: OTP_MAX_AGE_MS
+              value: {{ .Values.config.otpMaxAgeMs | int64 | quote }}
+            - name: INACTIVITY_TIMEOUT_MS
+              value: {{ .Values.config.inactivityTimeoutMs | int64 | quote }}
+            {{- with .Values.config.bitwardenApiUrl }}
+            - name: BITWARDEN_API_URL
+              value: {{ . | quote }}
+            {{- end }}
+            - name: CONNECT_ROSTACK_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "otp.secretName" . }}
+                  key: CONNECT_ROSTACK_TOKEN
+            - name: MAIL_ROSTACK_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "otp.secretName" . }}
+                  key: MAIL_ROSTACK_TOKEN
+            {{- if .Values.config.bitwardenApiUrl }}
+            - name: BITWARDEN_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "otp.secretName" . }}
+                  key: BITWARDEN_API_TOKEN
+                  optional: true
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

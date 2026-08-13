@@ -15,6 +15,7 @@ const sources = element<HTMLElement>("#sources");
 const refresh = element<HTMLButtonElement>("#refresh");
 const template = element<HTMLTemplateElement>("#code-template");
 const unlock = element<HTMLFormElement>("#unlock");
+const unlockOverlay = element<HTMLElement>("#unlock-overlay");
 const masterPassword = element<HTMLInputElement>("#master-password");
 const unlockError = element<HTMLElement>("#unlock-error");
 const search = element<HTMLInputElement>("#search");
@@ -23,14 +24,17 @@ const receivedPane = element<HTMLElement>("#received-pane");
 const totpPane = element<HTMLElement>("#totp-pane");
 const sessionTime = element<HTMLElement>("#session-time");
 const toast = element<HTMLElement>("#toast");
+const themeToggle = element<HTMLButtonElement>("#theme-toggle");
 
 let snapshot: Snapshot = { items: [], sources: {}, refreshedAt: new Date().toISOString(), privacyLocked: false };
 let activeView = "all";
 let lastActivitySent = Date.now();
 let sessionDeadline = Date.now() + 300_000;
 let toastTimer = 0;
+let theme: "dark" | "light" = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
 
 refresh.addEventListener("click", () => void load(true));
+themeToggle.addEventListener("click", () => setTheme(theme === "dark" ? "light" : "dark"));
 search.addEventListener("input", render);
 sourceFilter.addEventListener("change", render);
 unlock.addEventListener("submit", event => { event.preventDefault(); void unlockBitwarden(); });
@@ -44,6 +48,7 @@ document.addEventListener("keydown", event => {
 for (const eventName of ["pointerdown", "keydown", "touchstart", "scroll"] as const) window.addEventListener(eventName, reportActivity, { passive: true });
 
 void load();
+setTheme(theme);
 setInterval(() => void load(), 15_000);
 setInterval(renderSessionTimer, 1_000);
 const events = new EventSource("/api/events");
@@ -78,7 +83,9 @@ function render(): void {
     badge.textContent = `${name} ${status.ok ? "connected" : status.requiresUnlock ? "locked" : "offline"}`;
     badge.title = status.error || `Last checked ${relativeTime(status.checkedAt)}`; return badge;
   }));
-  unlock.hidden = !snapshot.sources.bitwarden?.requiresUnlock;
+  const requiresUnlock = snapshot.sources.bitwarden?.requiresUnlock === true;
+  unlockOverlay.hidden = !requiresUnlock;
+  if (requiresUnlock && document.activeElement !== masterPassword) queueMicrotask(() => masterPassword.focus());
 }
 
 function setView(view: string): void {
@@ -111,6 +118,7 @@ function renderCode(item: OtpItem): Element {
 function reportActivity(): void { const now = Date.now(); sessionDeadline = now + 300_000; if (now - lastActivitySent < 30_000) return; lastActivitySent = now; void fetch("/api/activity", { method: "POST", keepalive: true }); }
 function renderSessionTimer(): void { const seconds = Math.max(0, Math.ceil((sessionDeadline - Date.now()) / 1000)); sessionTime.textContent = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`; }
 function showToast(message: string): void { toast.textContent = message; toast.classList.add("visible"); clearTimeout(toastTimer); toastTimer = window.setTimeout(() => toast.classList.remove("visible"), 1500); }
+function setTheme(next: "dark" | "light"): void { theme = next; document.documentElement.dataset.theme = next; const label = `Switch to ${next === "dark" ? "light" : "dark"} theme`; themeToggle.title = label; themeToggle.setAttribute("aria-label", label); }
 function countdown(value: string): string { return `${Math.max(0, Math.ceil((Date.parse(value) - Date.now()) / 1000))}s`; }
 function relativeTime(value: string | null): string { if (!value) return "never"; const seconds = Math.round((Date.parse(value) - Date.now()) / 1000); const formatter = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" }); if (Math.abs(seconds) < 60) return formatter.format(seconds, "second"); const minutes = Math.round(seconds / 60); if (Math.abs(minutes) < 60) return formatter.format(minutes, "minute"); const hours = Math.round(minutes / 60); if (Math.abs(hours) < 24) return formatter.format(hours, "hour"); return formatter.format(Math.round(hours / 24), "day"); }
 function element<T extends Element>(selector: string, root: ParentNode = document): T { const value = root.querySelector(selector); if (!value) throw new Error(`Missing element: ${selector}`); return value as T; }

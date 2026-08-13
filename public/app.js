@@ -12,6 +12,7 @@ const sources = element("#sources");
 const refresh = element("#refresh");
 const template = element("#code-template");
 const unlock = element("#unlock");
+const unlockOverlay = element("#unlock-overlay");
 const masterPassword = element("#master-password");
 const unlockError = element("#unlock-error");
 const search = element("#search");
@@ -20,12 +21,15 @@ const receivedPane = element("#received-pane");
 const totpPane = element("#totp-pane");
 const sessionTime = element("#session-time");
 const toast = element("#toast");
+const themeToggle = element("#theme-toggle");
 let snapshot = { items: [], sources: {}, refreshedAt: new Date().toISOString(), privacyLocked: false };
 let activeView = "all";
 let lastActivitySent = Date.now();
 let sessionDeadline = Date.now() + 300_000;
 let toastTimer = 0;
+let theme = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
 refresh.addEventListener("click", () => void load(true));
+themeToggle.addEventListener("click", () => setTheme(theme === "dark" ? "light" : "dark"));
 search.addEventListener("input", render);
 sourceFilter.addEventListener("change", render);
 unlock.addEventListener("submit", event => { event.preventDefault(); void unlockBitwarden(); });
@@ -46,6 +50,7 @@ document.addEventListener("keydown", event => {
 for (const eventName of ["pointerdown", "keydown", "touchstart", "scroll"])
     window.addEventListener(eventName, reportActivity, { passive: true });
 void load();
+setTheme(theme);
 setInterval(() => void load(), 15_000);
 setInterval(renderSessionTimer, 1_000);
 const events = new EventSource("/api/events");
@@ -91,7 +96,10 @@ function render() {
         badge.title = status.error || `Last checked ${relativeTime(status.checkedAt)}`;
         return badge;
     }));
-    unlock.hidden = !snapshot.sources.bitwarden?.requiresUnlock;
+    const requiresUnlock = snapshot.sources.bitwarden?.requiresUnlock === true;
+    unlockOverlay.hidden = !requiresUnlock;
+    if (requiresUnlock && document.activeElement !== masterPassword)
+        queueMicrotask(() => masterPassword.focus());
 }
 function setView(view) {
     activeView = view;
@@ -145,6 +153,7 @@ function reportActivity() { const now = Date.now(); sessionDeadline = now + 300_
     return; lastActivitySent = now; void fetch("/api/activity", { method: "POST", keepalive: true }); }
 function renderSessionTimer() { const seconds = Math.max(0, Math.ceil((sessionDeadline - Date.now()) / 1000)); sessionTime.textContent = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`; }
 function showToast(message) { toast.textContent = message; toast.classList.add("visible"); clearTimeout(toastTimer); toastTimer = window.setTimeout(() => toast.classList.remove("visible"), 1500); }
+function setTheme(next) { theme = next; document.documentElement.dataset.theme = next; const label = `Switch to ${next === "dark" ? "light" : "dark"} theme`; themeToggle.title = label; themeToggle.setAttribute("aria-label", label); }
 function countdown(value) { return `${Math.max(0, Math.ceil((Date.parse(value) - Date.now()) / 1000))}s`; }
 function relativeTime(value) { if (!value)
     return "never"; const seconds = Math.round((Date.parse(value) - Date.now()) / 1000); const formatter = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" }); if (Math.abs(seconds) < 60)

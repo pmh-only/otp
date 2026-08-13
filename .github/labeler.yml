@@ -1,0 +1,57 @@
+backend:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/*.go"
+          - go.mod
+
+frontend:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "frontend/**"
+          - "public/**"
+          - tsconfig.json
+
+helm:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "charts/**"
+          - .github/workflows/helm-pages.yml
+
+docker:
+  - changed-files:
+      - any-glob-to-any-file:
+          - Dockerfile
+          - "Dockerfile.*"
+          - .dockerignore
+          - docker-compose.yml
+
+github_actions:
+  - changed-files:
+      - any-glob-to-any-file:
+          - ".github/workflows/**"
+          - .github/dependabot.yml
+          - .github/labeler.yml
+
+security:
+  - changed-files:
+      - any-glob-to-any-file:
+          - .github/codeql/**
+          - .github/workflows/codeql.yml
+          - CODEOWNERS
+
+release:
+  - any:
+      - head-branch:
+          - "^release-please--"
+      - changed-files:
+          - any-glob-to-any-file:
+              - release-please-config.json
+              - .release-please-manifest.json
+              - version.txt
+              - .github/workflows/release-please.yml
+
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/*.md"
+          - "charts/repository/**"

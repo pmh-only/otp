@@ -92,7 +92,7 @@ func TestInactivityLocksVaultAndClearsCodes(t *testing.T) {
 		status:            map[string]sourceStatus{"bitwarden": {OK: true}},
 		bitwardenSource:   &bitwardenSource{baseURL: server.URL, client: server.Client()},
 		inactivityTimeout: 5 * time.Minute,
-		lastActivity:      now.Add(-6 * time.Minute),
+		sessions:          map[string]time.Time{"expired-session-id-123456789012345": now.Add(-time.Minute)},
 	}
 	store.expireInactive(context.Background(), now)
 	if !locked {
@@ -108,8 +108,9 @@ func TestInactivityLocksVaultAndClearsCodes(t *testing.T) {
 
 func TestActivityDefersInactivityLock(t *testing.T) {
 	now := time.Now().UTC()
-	store := &store{inactivityTimeout: 5 * time.Minute, lastActivity: now.Add(-4 * time.Minute)}
-	store.recordActivity(now)
+	session := "active-session-id-1234567890123456"
+	store := &store{inactivityTimeout: 5 * time.Minute, sessions: map[string]time.Time{session: now.Add(time.Minute)}}
+	store.recordActivity(session, now)
 	store.expireInactive(context.Background(), now.Add(4*time.Minute))
 	if store.privacyLocked {
 		t.Fatal("active session was locked")
@@ -118,20 +119,42 @@ func TestActivityDefersInactivityLock(t *testing.T) {
 
 func TestPrivacyLockBlocksReceivedCodes(t *testing.T) {
 	now := time.Now().UTC()
-	store := &store{privacyLocked: true, status: map[string]sourceStatus{}, maxAge: time.Hour}
+	session := "authorized-session-id-123456789012"
+	store := &store{privacyLocked: true, status: map[string]sourceStatus{}, maxAge: time.Hour, inactivityTimeout: 5 * time.Minute, sessions: map[string]time.Time{}, bitwardenSource: &bitwardenSource{}}
 	store.mu.Lock()
 	if !store.privacyLocked {
 		t.Fatal("expected locked store")
 	}
 	store.mu.Unlock()
 
-	result := store.snapshot()
+	result := store.snapshot("other-session-id-123456789012345")
 	if !result.PrivacyLocked || len(result.Items) != 0 {
 		t.Fatalf("privacyLocked=%v items=%d", result.PrivacyLocked, len(result.Items))
 	}
-	store.unlockPrivacy(now)
-	if store.snapshot().PrivacyLocked {
+	store.unlockPrivacy(session, now)
+	if store.snapshot(session).PrivacyLocked {
 		t.Fatal("successful unlock did not open workspace")
+	}
+}
+
+func TestSessionIsolationHidesCodesFromOtherTabs(t *testing.T) {
+	now := time.Now().UTC()
+	owner := "owner-session-id-12345678901234567"
+	other := "other-session-id-12345678901234567"
+	store := &store{
+		items:             []otpItem{{ID: "sms:1", Code: "123456", Source: "sms", ReceivedAt: now}},
+		totpItems:         []totpItem{{ID: "totp", Secret: []byte("secret"), Period: 30, Digits: 6, Algorithm: "SHA1"}},
+		status:            map[string]sourceStatus{"bitwarden": {OK: true}},
+		bitwardenSource:   &bitwardenSource{},
+		maxAge:            time.Hour,
+		inactivityTimeout: 5 * time.Minute,
+		sessions:          map[string]time.Time{owner: now.Add(5 * time.Minute)},
+	}
+	if got := store.snapshot(owner); got.PrivacyLocked || len(got.Items) != 2 {
+		t.Fatalf("owner locked=%v items=%d", got.PrivacyLocked, len(got.Items))
+	}
+	if got := store.snapshot(other); !got.PrivacyLocked || len(got.Items) != 0 {
+		t.Fatalf("other locked=%v items=%d", got.PrivacyLocked, len(got.Items))
 	}
 }
 

@@ -22,6 +22,8 @@ const totpPane = element("#totp-pane");
 const sessionTime = element("#session-time");
 const toast = element("#toast");
 const themeToggle = element("#theme-toggle");
+const browserSession = sessionStorage.getItem("otp-session") || crypto.randomUUID();
+sessionStorage.setItem("otp-session", browserSession);
 let snapshot = { items: [], sources: {}, refreshedAt: new Date().toISOString(), privacyLocked: false };
 let activeView = "all";
 let lastActivitySent = Date.now();
@@ -53,12 +55,11 @@ void load();
 setTheme(theme);
 setInterval(() => void load(), 15_000);
 setInterval(renderSessionTimer, 1_000);
-const events = new EventSource("/api/events");
-events.onmessage = (event) => { snapshot = JSON.parse(event.data); render(); };
+void streamEvents();
 async function load(force = false) {
     refresh.disabled = true;
     try {
-        const response = await fetch(force ? "/api/refresh" : "/api/otps", { method: force ? "POST" : "GET", cache: "no-store" });
+        const response = await apiFetch(force ? "/api/refresh" : "/api/otps", { method: force ? "POST" : "GET", cache: "no-store" });
         if (!response.ok)
             throw new Error("Unable to load codes");
         snapshot = await response.json();
@@ -116,7 +117,7 @@ async function unlockBitwarden() {
     button.disabled = true;
     unlockError.textContent = "";
     try {
-        const response = await fetch("/api/bitwarden/unlock", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: masterPassword.value }) });
+        const response = await apiFetch("/api/bitwarden/unlock", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: masterPassword.value }) });
         masterPassword.value = "";
         if (!response.ok)
             throw new Error("Unable to unlock vault. Check your master password.");
@@ -150,7 +151,35 @@ function renderCode(item) {
     return card;
 }
 function reportActivity() { const now = Date.now(); sessionDeadline = now + 300_000; if (now - lastActivitySent < 30_000)
-    return; lastActivitySent = now; void fetch("/api/activity", { method: "POST", keepalive: true }); }
+    return; lastActivitySent = now; void apiFetch("/api/activity", { method: "POST", keepalive: true }); }
+async function apiFetch(path, options = {}) { const headers = new Headers(options.headers); headers.set("X-OTP-Session", browserSession); return fetch(path, { ...options, headers }); }
+async function streamEvents() { for (;;) {
+    try {
+        const response = await apiFetch("/api/events", { cache: "no-store" });
+        if (!response.ok || !response.body)
+            throw new Error("Stream unavailable");
+        const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+        let buffer = "";
+        for (;;) {
+            const { value, done } = await reader.read();
+            if (done)
+                break;
+            buffer += value;
+            const messages = buffer.split("\n\n");
+            buffer = messages.pop() || "";
+            for (const message of messages) {
+                const line = message.split("\n").find(value => value.startsWith("data: "));
+                if (line) {
+                    snapshot = JSON.parse(line.slice(6));
+                    render();
+                }
+            }
+        }
+    }
+    catch {
+        await new Promise(resolve => setTimeout(resolve, 2_000));
+    }
+} }
 function renderSessionTimer() { const seconds = Math.max(0, Math.ceil((sessionDeadline - Date.now()) / 1000)); sessionTime.textContent = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`; }
 function showToast(message) { toast.textContent = message; toast.classList.add("visible"); clearTimeout(toastTimer); toastTimer = window.setTimeout(() => toast.classList.remove("visible"), 1500); }
 function setTheme(next) { theme = next; document.documentElement.dataset.theme = next; const label = `Switch to ${next === "dark" ? "light" : "dark"} theme`; themeToggle.title = label; themeToggle.setAttribute("aria-label", label); }

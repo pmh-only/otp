@@ -80,4 +80,6 @@ After five minutes without pointer, keyboard, touch, or scroll activity, the ser
 
 When Bitwarden is configured, its master-password unlock protects the entire workspace. Received SMS/mail OTPs are not collected into the visible in-memory store until the vault has been unlocked, and both received OTPs and TOTP codes are cleared together when the workspace locks.
 
+Each browser tab creates a random capability in `sessionStorage`. The backend authorizes only the tab that submitted the successful master-password unlock and requires that capability on snapshots, refreshes, activity reports, and realtime streams. Other tabs and browsers remain locked and receive no OTP or TOTP data even while the shared Bitwarden sidecar process is unlocked. Closing the tab discards its capability.
+
 Run backend tests with `go test ./...`. The Docker build compiles both TypeScript and Go and produces a minimal runtime image containing only the application binary and CA certificates.

@@ -99,8 +99,8 @@ type store struct {
 	bitwardenSource   *bitwardenSource
 	totpItems         []totpItem
 	inactivityTimeout time.Duration
-	lastActivity      time.Time
 	privacyLocked     bool
+	sessions          map[string]time.Time
 }
 
 func main() {
@@ -119,7 +119,7 @@ func main() {
 		smsSource:         &rostackSource{discoveryURL: cfg.ConnectURL, token: cfg.ConnectToken, resourceName: "sms-messages", client: client},
 		mailSource:        &rostackSource{discoveryURL: cfg.MailURL, token: cfg.MailToken, resourceName: "mailbox-entries", client: client},
 		inactivityTimeout: cfg.InactivityTimeout,
-		lastActivity:      time.Now().UTC(),
+		sessions:          make(map[string]time.Time),
 	}
 	if cfg.BitwardenURL != "" {
 		store.bitwardenSource = &bitwardenSource{baseURL: cfg.BitwardenURL, token: cfg.BitwardenToken, client: client}
@@ -150,23 +150,31 @@ func main() {
 		log.Fatal(err)
 	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/otps", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, store.snapshot())
+	mux.HandleFunc("GET /api/otps", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, store.snapshot(sessionID(r)))
 	})
 	mux.HandleFunc("GET /api/events", func(w http.ResponseWriter, r *http.Request) {
-		streamSnapshots(w, r, store)
+		streamSnapshots(w, r, store, sessionID(r))
 	})
 	mux.HandleFunc("POST /api/refresh", func(w http.ResponseWriter, r *http.Request) {
-		store.refresh(r.Context())
-		writeJSON(w, http.StatusOK, store.snapshot())
+		id := sessionID(r)
+		if store.authorized(id, time.Now().UTC()) {
+			store.refresh(r.Context())
+		}
+		writeJSON(w, http.StatusOK, store.snapshot(id))
 	})
-	mux.HandleFunc("POST /api/activity", func(w http.ResponseWriter, _ *http.Request) {
-		store.recordActivity(time.Now().UTC())
+	mux.HandleFunc("POST /api/activity", func(w http.ResponseWriter, r *http.Request) {
+		store.recordActivity(sessionID(r), time.Now().UTC())
 		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("POST /api/bitwarden/unlock", func(w http.ResponseWriter, r *http.Request) {
 		if store.bitwardenSource == nil {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "Bitwarden is not configured"})
+			return
+		}
+		id := sessionID(r)
+		if !validSessionID(id) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Valid browser session is required"})
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
@@ -181,9 +189,9 @@ func main() {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Unable to unlock vault"})
 			return
 		}
-		store.unlockPrivacy(time.Now().UTC())
+		store.unlockPrivacy(id, time.Now().UTC())
 		store.refresh(r.Context())
-		writeJSON(w, http.StatusOK, store.snapshot())
+		writeJSON(w, http.StatusOK, store.snapshot(id))
 	})
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -314,13 +322,17 @@ func (s *store) refreshSource(ctx context.Context, name string, source *rostackS
 	s.pruneLocked()
 }
 
-func (s *store) snapshot() snapshot {
+func (s *store) snapshot(session string) snapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	authorized := s.sessionAuthorizedLocked(session, time.Now().UTC())
 	s.pruneLocked()
-	items := append([]otpItem(nil), s.items...)
-	for _, item := range s.totpItems {
-		items = append(items, item.code(time.Now().UTC()))
+	items := []otpItem{}
+	if authorized {
+		items = append(items, s.items...)
+		for _, item := range s.totpItems {
+			items = append(items, item.code(time.Now().UTC()))
+		}
 	}
 	sort.Slice(items, func(i, j int) bool {
 		if items[i].Source == "bitwarden" && items[j].Source != "bitwarden" {
@@ -338,29 +350,36 @@ func (s *store) snapshot() snapshot {
 	for name, status := range s.status {
 		statuses[name] = status
 	}
-	return snapshot{Items: items, Sources: statuses, RefreshedAt: time.Now().UTC(), PrivacyLocked: s.privacyLocked}
-}
-
-func (s *store) recordActivity(at time.Time) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.privacyLocked && s.bitwardenSource != nil {
-		return
+	if !authorized && s.bitwardenSource != nil {
+		checkedAt := time.Now().UTC()
+		statuses["bitwarden"] = sourceStatus{CheckedAt: &checkedAt, Error: errBitwardenLocked.Error(), RequiresUnlock: true}
 	}
-	s.privacyLocked = false
-	s.lastActivity = at
+	return snapshot{Items: items, Sources: statuses, RefreshedAt: time.Now().UTC(), PrivacyLocked: !authorized && s.bitwardenSource != nil}
 }
 
-func (s *store) unlockPrivacy(at time.Time) {
+func (s *store) recordActivity(session string, at time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.sessionAuthorizedLocked(session, at) {
+		s.sessions[session] = at.Add(s.inactivityTimeout)
+	}
+}
+
+func (s *store) unlockPrivacy(session string, at time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.privacyLocked = false
-	s.lastActivity = at
+	s.sessions[session] = at.Add(s.inactivityTimeout)
 }
 
 func (s *store) expireInactive(ctx context.Context, now time.Time) {
 	s.mu.Lock()
-	if s.privacyLocked || now.Sub(s.lastActivity) < s.inactivityTimeout {
+	for id, expiresAt := range s.sessions {
+		if !expiresAt.After(now) {
+			delete(s.sessions, id)
+		}
+	}
+	if s.privacyLocked || len(s.sessions) > 0 {
 		s.mu.Unlock()
 		return
 	}
@@ -380,6 +399,17 @@ func (s *store) expireInactive(ctx context.Context, now time.Time) {
 	}
 }
 
+func (s *store) authorized(session string, now time.Time) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.sessionAuthorizedLocked(session, now)
+}
+
+func (s *store) sessionAuthorizedLocked(session string, now time.Time) bool {
+	expiresAt, ok := s.sessions[session]
+	return ok && expiresAt.After(now)
+}
+
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
@@ -389,7 +419,7 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	}
 }
 
-func streamSnapshots(w http.ResponseWriter, r *http.Request, store *store) {
+func streamSnapshots(w http.ResponseWriter, r *http.Request, store *store, session string) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
@@ -401,7 +431,7 @@ func streamSnapshots(w http.ResponseWriter, r *http.Request, store *store) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
-		payload, err := json.Marshal(store.snapshot())
+		payload, err := json.Marshal(store.snapshot(session))
 		if err != nil {
 			return
 		}
@@ -415,6 +445,22 @@ func streamSnapshots(w http.ResponseWriter, r *http.Request, store *store) {
 		case <-ticker.C:
 		}
 	}
+}
+
+func sessionID(r *http.Request) string {
+	return r.Header.Get("X-OTP-Session")
+}
+
+func validSessionID(value string) bool {
+	if len(value) < 32 || len(value) > 64 {
+		return false
+	}
+	for _, character := range value {
+		if (character < 'a' || character > 'z') && (character < 'A' || character > 'Z') && (character < '0' || character > '9') && character != '-' && character != '_' {
+			return false
+		}
+	}
+	return true
 }
 
 func secureHeaders(next http.Handler) http.Handler {

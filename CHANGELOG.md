@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/pmh-only/otp/compare/v0.2.1...v0.3.0) (2026-08-13)
+
+
+### Features
+
+* add Bitwarden Helm sidecar ([9887471](https://github.com/pmh-only/otp/commit/988747181b7bcb231cdbb6487bfe24a3d18e6566))
+
 ## [0.2.1](https://github.com/pmh-only/otp/compare/v0.2.0...v0.2.1) (2026-08-13)
 
 

@@ -12,7 +12,7 @@ import (
 )
 
 func TestPasskeyManagerIsDisabledWithoutDataOrSetupToken(t *testing.T) {
-	manager, err := newPasskeyManager(filepath.Join(t.TempDir(), "passkeys.json"), "", false)
+	manager, err := newPasskeyManager(filepath.Join(t.TempDir(), "passkeys.json"), "", boolPointer(false))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -22,9 +22,16 @@ func TestPasskeyManagerIsDisabledWithoutDataOrSetupToken(t *testing.T) {
 }
 
 func TestPasskeyManagerFailsClosedWhenRequiredDataIsMissing(t *testing.T) {
-	manager, err := newPasskeyManager(filepath.Join(t.TempDir(), "passkeys.json"), "", true)
+	manager, err := newPasskeyManager(filepath.Join(t.TempDir(), "passkeys.json"), "", boolPointer(true))
 	if err == nil || manager != nil {
 		t.Fatal("missing required passkey data did not prevent startup")
+	}
+}
+
+func TestPasskeyManagerDetectsLegacySetupToken(t *testing.T) {
+	manager, err := newPasskeyManager(filepath.Join(t.TempDir(), "passkeys.json"), "legacy-token", nil)
+	if err != nil || manager == nil {
+		t.Fatalf("manager=%v err=%v", manager, err)
 	}
 }
 
@@ -70,7 +77,7 @@ func TestPasskeyDataPersists(t *testing.T) {
 	if info.Mode().Perm() != 0600 {
 		t.Fatalf("mode = %o, want 600", info.Mode().Perm())
 	}
-	loaded, err := newPasskeyManager(path, "", true)
+	loaded, err := newPasskeyManager(path, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,6 +85,8 @@ func TestPasskeyDataPersists(t *testing.T) {
 		t.Fatal("persisted passkey data was not restored")
 	}
 }
+
+func boolPointer(value bool) *bool { return &value }
 
 func TestPasskeyCommitKeepsPreviousStateWhenPersistenceFails(t *testing.T) {
 	parent := filepath.Join(t.TempDir(), "not-a-directory")

@@ -29,7 +29,7 @@ secrets:
   existingSecret: otp-secrets
 ```
 
-The Secret must contain `PASSKEY_SETUP_TOKEN`. When Helm creates it, set `secrets.passkeySetupToken`; Sealed Secret users must provide `PASSKEY_SETUP_TOKEN` under `sealedSecret.encryptedData`. The chart creates a retained 1 MiB PVC for passkey public credential state. Set `passkey.existingClaim` to use a pre-provisioned claim, or configure `passkey.storageClass` and `passkey.size` for the generated claim.
+For initial enrollment, the Secret must contain `PASSKEY_SETUP_TOKEN`. When Helm creates it, set `secrets.passkeySetupToken`; Sealed Secret users can provide `PASSKEY_SETUP_TOKEN` under `sealedSecret.encryptedData`. After enrollment, remove the key or clear the value: the Secret reference is optional while `passkey.enabled` remains true. The chart creates a retained 1 MiB PVC for passkey public credential state. Set `passkey.existingClaim` to use a pre-provisioned claim, or configure `passkey.storageClass` and `passkey.size` for the generated claim. If the credential file is missing from that claim, the Pod fails closed at startup.
 
 WebAuthn uses the HTTPS host of the first registration as its permanent RP ID and origin. Complete first registration through the final public hostname; changing that hostname later requires restoring or replacing the passkey data file and registering new passkeys.
 

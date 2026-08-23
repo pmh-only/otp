@@ -53,6 +53,8 @@ spec:
             - name: INACTIVITY_TIMEOUT_MS
               value: {{ .Values.config.inactivityTimeoutMs | int64 | quote }}
             {{- if .Values.passkey.enabled }}
+            - name: PASSKEY_ENABLED
+              value: "true"
             - name: PASSKEY_DATA_FILE
               value: /data/passkeys.json
             - name: PASSKEY_SETUP_TOKEN
@@ -60,6 +62,7 @@ spec:
                 secretKeyRef:
                   name: {{ include "otp.secretName" . }}
                   key: PASSKEY_SETUP_TOKEN
+                  optional: true
             {{- end }}
             {{- if .Values.bitwarden.enabled }}
             - name: BITWARDEN_API_URL

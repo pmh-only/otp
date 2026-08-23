@@ -38,8 +38,11 @@ func (u passkeyUser) WebAuthnCredentials() []webauthn.Credential { return u.data
 type passkeyCeremony struct {
 	kind    string
 	origin  string
+	userID  []byte
 	session webauthn.SessionData
 }
+
+const maxPasskeyCeremonies = 256
 
 type passkeyManager struct {
 	mu         sync.Mutex
@@ -49,12 +52,15 @@ type passkeyManager struct {
 	ceremonies map[string]passkeyCeremony
 }
 
-func newPasskeyManager(path, setupToken string) (*passkeyManager, error) {
+func newPasskeyManager(path, setupToken string, enabled bool) (*passkeyManager, error) {
+	if !enabled {
+		return nil, nil
+	}
 	manager := &passkeyManager{path: path, setupToken: setupToken, ceremonies: make(map[string]passkeyCeremony)}
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		if setupToken == "" {
-			return nil, nil
+			return nil, errors.New("passkey authentication is enabled but credential data and setup token are missing")
 		}
 		return manager, nil
 	}
@@ -114,8 +120,10 @@ func (m *passkeyManager) beginRegistration(r *http.Request, browserSession, setu
 	if err != nil {
 		return nil, err
 	}
-	m.data.UserID = data.UserID
-	m.ceremonies[browserSession] = passkeyCeremony{kind: "register", origin: origin, session: *session}
+	ceremony := passkeyCeremony{kind: "register", origin: origin, userID: data.UserID, session: *session}
+	if err := m.storeCeremonyLocked(browserSession, ceremony); err != nil {
+		return nil, err
+	}
 	return creation, nil
 }
 
@@ -126,18 +134,23 @@ func (m *passkeyManager) finishRegistration(r *http.Request, browserSession stri
 	if !ok {
 		return errors.New("registration ceremony expired or was not started")
 	}
+	if len(m.data.Credentials) > 0 {
+		return errors.New("initial passkey registration is already complete")
+	}
+	candidate := m.data
+	candidate.UserID = ceremony.userID
 	provider, err := newWebAuthn(ceremony.session.RelyingPartyID, ceremony.origin)
 	if err != nil {
 		return err
 	}
-	credential, err := provider.FinishRegistration(passkeyUser{data: m.data}, ceremony.session, r)
+	credential, err := provider.FinishRegistration(passkeyUser{data: candidate}, ceremony.session, r)
 	if err != nil {
 		return err
 	}
-	m.data.Origin = ceremony.origin
-	m.data.RPID = ceremony.session.RelyingPartyID
-	m.data.Credentials = append(m.data.Credentials, *credential)
-	return m.saveLocked()
+	candidate.Origin = ceremony.origin
+	candidate.RPID = ceremony.session.RelyingPartyID
+	candidate.Credentials = []webauthn.Credential{*credential}
+	return m.commitLocked(candidate)
 }
 
 func (m *passkeyManager) beginLogin(r *http.Request, browserSession string) (any, error) {
@@ -160,7 +173,9 @@ func (m *passkeyManager) beginLogin(r *http.Request, browserSession string) (any
 	if err != nil {
 		return nil, err
 	}
-	m.ceremonies[browserSession] = passkeyCeremony{kind: "login", origin: m.data.Origin, session: *session}
+	if err := m.storeCeremonyLocked(browserSession, passkeyCeremony{kind: "login", origin: m.data.Origin, session: *session}); err != nil {
+		return nil, err
+	}
 	return assertion, nil
 }
 
@@ -181,8 +196,10 @@ func (m *passkeyManager) finishLogin(r *http.Request, browserSession string) err
 	}
 	for i := range m.data.Credentials {
 		if bytes.Equal(m.data.Credentials[i].ID, credential.ID) {
-			m.data.Credentials[i] = *credential
-			return m.saveLocked()
+			candidate := m.data
+			candidate.Credentials = append([]webauthn.Credential(nil), m.data.Credentials...)
+			candidate.Credentials[i] = *credential
+			return m.commitLocked(candidate)
 		}
 	}
 	return errors.New("authenticated credential was not found")
@@ -192,6 +209,20 @@ func (m *passkeyManager) consumeCeremony(browserSession, kind string) (passkeyCe
 	ceremony, ok := m.ceremonies[browserSession]
 	delete(m.ceremonies, browserSession)
 	return ceremony, ok && ceremony.kind == kind && ceremony.session.Expires.After(time.Now())
+}
+
+func (m *passkeyManager) storeCeremonyLocked(browserSession string, ceremony passkeyCeremony) error {
+	now := time.Now()
+	for id, existing := range m.ceremonies {
+		if !existing.session.Expires.After(now) {
+			delete(m.ceremonies, id)
+		}
+	}
+	if _, replacing := m.ceremonies[browserSession]; !replacing && len(m.ceremonies) >= maxPasskeyCeremonies {
+		return errors.New("too many passkey ceremonies are in progress")
+	}
+	m.ceremonies[browserSession] = ceremony
+	return nil
 }
 
 func (m *passkeyManager) validSetupToken(value string) bool {
@@ -225,8 +256,16 @@ func (m *passkeyManager) validateStoredOrigin(r *http.Request) error {
 	return nil
 }
 
-func (m *passkeyManager) saveLocked() error {
-	data, err := json.MarshalIndent(m.data, "", "  ")
+func (m *passkeyManager) commitLocked(candidate passkeyData) error {
+	if err := m.saveLocked(candidate); err != nil {
+		return err
+	}
+	m.data = candidate
+	return nil
+}
+
+func (m *passkeyManager) saveLocked(candidate passkeyData) error {
+	data, err := json.MarshalIndent(candidate, "", "  ")
 	if err != nil {
 		return err
 	}

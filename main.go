@@ -33,6 +33,7 @@ type config struct {
 	BitwardenToken    string
 	PasskeyDataFile   string
 	PasskeySetupToken string
+	PasskeyEnabled    bool
 	InactivityTimeout time.Duration
 }
 
@@ -123,7 +124,7 @@ func main() {
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
-	passkeys, err := newPasskeyManager(cfg.PasskeyDataFile, cfg.PasskeySetupToken)
+	passkeys, err := newPasskeyManager(cfg.PasskeyDataFile, cfg.PasskeySetupToken, cfg.PasskeyEnabled)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -615,12 +616,16 @@ func readConfig() (config, error) {
 	bitwardenURL := strings.TrimRight(os.Getenv("BITWARDEN_API_URL"), "/")
 	bitwardenToken := os.Getenv("BITWARDEN_API_TOKEN")
 	passkeyDataFile := envOr("PASSKEY_DATA_FILE", "passkeys.json")
+	passkeyEnabled, err := booleanEnv("PASSKEY_ENABLED", false)
+	if err != nil {
+		return config{}, err
+	}
 	return config{
 		Port: port, PollInterval: time.Duration(poll) * time.Millisecond, MaxAge: time.Duration(maxAge) * time.Millisecond,
 		ConnectURL: envOr("CONNECT_DISCOVERY_URL", "http://connect-service.connect.svc.cluster.local:8080/.well-known/rostack"), ConnectToken: connectToken,
 		MailURL: envOr("MAIL_DISCOVERY_URL", "http://mailui.mail.svc.cluster.local:3000/.well-known/rostack"), MailToken: mailToken,
 		BitwardenURL: bitwardenURL, BitwardenToken: bitwardenToken,
-		PasskeyDataFile: passkeyDataFile, PasskeySetupToken: os.Getenv("PASSKEY_SETUP_TOKEN"),
+		PasskeyDataFile: passkeyDataFile, PasskeySetupToken: os.Getenv("PASSKEY_SETUP_TOKEN"), PasskeyEnabled: passkeyEnabled,
 		InactivityTimeout: time.Duration(inactivity) * time.Millisecond,
 	}, nil
 }
@@ -645,6 +650,18 @@ func positiveInt(name string, fallback int) (int, error) {
 	parsed, err := strconv.Atoi(value)
 	if err != nil || parsed <= 0 {
 		return 0, fmt.Errorf("%s must be a positive integer", name)
+	}
+	return parsed, nil
+}
+
+func booleanEnv(name string, fallback bool) (bool, error) {
+	value, exists := os.LookupEnv(name)
+	if !exists || value == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, fmt.Errorf("%s must be a boolean", name)
 	}
 	return parsed, nil
 }

@@ -26,13 +26,13 @@ The service discovers both Rostack implementations, polls their collection snaps
 
 ## Passkey login
 
-Set `PASSKEY_SETUP_TOKEN` to a long random value to enable passkey authentication. On the first visit, enter that token and register a passkey. The service derives the WebAuthn RP ID and origin from the first HTTPS request, requires `Origin` to match `Host`, and pins both values in `PASSKEY_DATA_FILE` with the credential public key. Plain HTTP is accepted only on localhost.
+Set `PASSKEY_ENABLED=true` and provide a long random `PASSKEY_SETUP_TOKEN` for initial enrollment. On the first visit, enter that token and register a passkey. The service derives the WebAuthn RP ID and origin from the first HTTPS request, requires `Origin` to match `Host`, and pins both values in `PASSKEY_DATA_FILE` with the credential public key. Plain HTTP is accepted only on localhost.
 
 ```sh
 openssl rand -base64 32
 ```
 
-The passkey file must survive application restarts. It contains the WebAuthn user handle and public credential data, not a private key. Back it up as authentication state and keep it writable only by the service account. The setup endpoint closes after the first passkey is enrolled. Removing `PASSKEY_SETUP_TOKEN` afterward is still recommended; existing passkey login continues to work.
+The passkey file must survive application restarts. It contains the WebAuthn user handle and public credential data, not a private key. Back it up as authentication state and keep it writable only by the service account. The setup endpoint closes after the first passkey is enrolled. Removing `PASSKEY_SETUP_TOKEN` afterward is still recommended; keep `PASSKEY_ENABLED=true` so a missing or mis-mounted credential file causes startup to fail instead of disabling authentication.
 
 Passkey login opens received SMS and mail codes but leaves Bitwarden locked. Entering the Bitwarden master password from either the login screen or the authenticator panel unlocks both the workspace and vault TOTP. Passkey credentials cannot decrypt Bitwarden, so the vault password is still requested separately when needed.
 

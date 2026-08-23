@@ -8,6 +8,7 @@ services:
       CONNECT_ROSTACK_TOKEN: ${CONNECT_ROSTACK_TOKEN:?CONNECT_ROSTACK_TOKEN is required}
       MAIL_DISCOVERY_URL: ${MAIL_DISCOVERY_URL:-http://mailui.mail.svc.cluster.local:3000/.well-known/rostack}
       MAIL_ROSTACK_TOKEN: ${MAIL_ROSTACK_TOKEN:?MAIL_ROSTACK_TOKEN is required}
+      PASSKEY_ENABLED: ${PASSKEY_ENABLED:-false}
       PASSKEY_DATA_FILE: /data/passkeys.json
       PASSKEY_SETUP_TOKEN: ${PASSKEY_SETUP_TOKEN:-}
     ports:

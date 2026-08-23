@@ -7,11 +7,14 @@ COPY frontend ./frontend
 COPY public ./public
 RUN tsgo -p tsconfig.json
 COPY *.go ./
-RUN CGO_ENABLED=0 go test ./... && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /otp-inbox .
+RUN CGO_ENABLED=0 go test ./... && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /otp-inbox . \
+    && mkdir /passkey-data \
+    && chown 65532:65532 /passkey-data
 
 FROM scratch
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=build /otp-inbox /otp-inbox
+COPY --from=build --chown=65532:65532 /passkey-data /data
 USER 65532:65532
 EXPOSE 3000
 ENTRYPOINT ["/otp-inbox"]

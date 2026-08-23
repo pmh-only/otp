@@ -1,21 +1,30 @@
 package main
 
 import (
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/go-webauthn/webauthn/webauthn"
 )
 
 func TestPasskeyManagerIsDisabledWithoutDataOrSetupToken(t *testing.T) {
-	manager, err := newPasskeyManager(filepath.Join(t.TempDir(), "passkeys.json"), "")
+	manager, err := newPasskeyManager(filepath.Join(t.TempDir(), "passkeys.json"), "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if manager != nil {
 		t.Fatal("passkeys should be disabled")
+	}
+}
+
+func TestPasskeyManagerFailsClosedWhenRequiredDataIsMissing(t *testing.T) {
+	manager, err := newPasskeyManager(filepath.Join(t.TempDir(), "passkeys.json"), "", true)
+	if err == nil || manager != nil {
+		t.Fatal("missing required passkey data did not prevent startup")
 	}
 }
 
@@ -49,7 +58,7 @@ func TestPasskeyDataPersists(t *testing.T) {
 		},
 	}
 	manager.mu.Lock()
-	err := manager.saveLocked()
+	err := manager.saveLocked(manager.data)
 	manager.mu.Unlock()
 	if err != nil {
 		t.Fatal(err)
@@ -61,12 +70,53 @@ func TestPasskeyDataPersists(t *testing.T) {
 	if info.Mode().Perm() != 0600 {
 		t.Fatalf("mode = %o, want 600", info.Mode().Perm())
 	}
-	loaded, err := newPasskeyManager(path, "")
+	loaded, err := newPasskeyManager(path, "", true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !loaded.configured() || loaded.data.Origin != manager.data.Origin {
 		t.Fatal("persisted passkey data was not restored")
+	}
+}
+
+func TestPasskeyCommitKeepsPreviousStateWhenPersistenceFails(t *testing.T) {
+	parent := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(parent, []byte("file"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	manager := &passkeyManager{path: filepath.Join(parent, "passkeys.json"), data: passkeyData{Origin: "https://old.example"}}
+	if err := manager.commitLocked(passkeyData{Origin: "https://new.example"}); err == nil {
+		t.Fatal("commit unexpectedly succeeded")
+	}
+	if manager.data.Origin != "https://old.example" {
+		t.Fatal("failed persistence changed in-memory state")
+	}
+}
+
+func TestPasskeyCeremoniesArePrunedAndBounded(t *testing.T) {
+	manager := &passkeyManager{ceremonies: make(map[string]passkeyCeremony)}
+	for i := range maxPasskeyCeremonies {
+		id := fmt.Sprintf("session-%d", i)
+		manager.ceremonies[id] = passkeyCeremony{session: webauthn.SessionData{Expires: time.Now().Add(time.Minute)}}
+	}
+	ceremony := passkeyCeremony{session: webauthn.SessionData{Expires: time.Now().Add(time.Minute)}}
+	if err := manager.storeCeremonyLocked("overflow", ceremony); err == nil {
+		t.Fatal("ceremony limit was not enforced")
+	}
+	manager.ceremonies["session-0"] = passkeyCeremony{session: webauthn.SessionData{Expires: time.Now().Add(-time.Second)}}
+	if err := manager.storeCeremonyLocked("replacement", ceremony); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPasskeyRegistrationRejectsCeremonyStartedBeforeEnrollment(t *testing.T) {
+	session := "stale-registration-session"
+	manager := &passkeyManager{
+		data:       passkeyData{Credentials: []webauthn.Credential{{ID: []byte("enrolled")}}},
+		ceremonies: map[string]passkeyCeremony{session: {kind: "register", session: webauthn.SessionData{Expires: time.Now().Add(time.Minute)}}},
+	}
+	if err := manager.finishRegistration(nil, session); err == nil || err.Error() != "initial passkey registration is already complete" {
+		t.Fatalf("got %v", err)
 	}
 }
 

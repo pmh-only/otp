@@ -228,15 +228,16 @@ func pow10(digits int) uint32 {
 func (s *store) refreshBitwarden(ctx context.Context) {
 	s.mu.RLock()
 	privacyLocked := s.privacyLocked
+	hasVaultSession := s.hasVaultSessionLocked(time.Now().UTC())
 	s.mu.RUnlock()
-	if privacyLocked {
+	if privacyLocked || !hasVaultSession {
 		return
 	}
 	checkedAt := time.Now().UTC()
 	items, err := s.bitwardenSource.list(ctx)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.privacyLocked {
+	if s.privacyLocked || !s.hasVaultSessionLocked(time.Now().UTC()) {
 		return
 	}
 	if err != nil {

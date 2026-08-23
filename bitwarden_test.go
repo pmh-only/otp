@@ -92,7 +92,7 @@ func TestInactivityLocksVaultAndClearsCodes(t *testing.T) {
 		status:            map[string]sourceStatus{"bitwarden": {OK: true}},
 		bitwardenSource:   &bitwardenSource{baseURL: server.URL, client: server.Client()},
 		inactivityTimeout: 5 * time.Minute,
-		sessions:          map[string]time.Time{"expired-session-id-123456789012345": now.Add(-time.Minute)},
+		sessions:          map[string]sessionAccess{"expired-session-id-123456789012345": {ExpiresAt: now.Add(-time.Minute), Vault: true}},
 	}
 	store.expireInactive(context.Background(), now)
 	if !locked {
@@ -109,7 +109,7 @@ func TestInactivityLocksVaultAndClearsCodes(t *testing.T) {
 func TestActivityDefersInactivityLock(t *testing.T) {
 	now := time.Now().UTC()
 	session := "active-session-id-1234567890123456"
-	store := &store{inactivityTimeout: 5 * time.Minute, sessions: map[string]time.Time{session: now.Add(time.Minute)}}
+	store := &store{inactivityTimeout: 5 * time.Minute, sessions: map[string]sessionAccess{session: {ExpiresAt: now.Add(time.Minute)}}}
 	store.recordActivity(session, now)
 	store.expireInactive(context.Background(), now.Add(4*time.Minute))
 	if store.privacyLocked {
@@ -120,7 +120,7 @@ func TestActivityDefersInactivityLock(t *testing.T) {
 func TestPrivacyLockBlocksReceivedCodes(t *testing.T) {
 	now := time.Now().UTC()
 	session := "authorized-session-id-123456789012"
-	store := &store{privacyLocked: true, status: map[string]sourceStatus{}, maxAge: time.Hour, inactivityTimeout: 5 * time.Minute, sessions: map[string]time.Time{}, bitwardenSource: &bitwardenSource{}}
+	store := &store{privacyLocked: true, status: map[string]sourceStatus{}, maxAge: time.Hour, inactivityTimeout: 5 * time.Minute, sessions: map[string]sessionAccess{}, bitwardenSource: &bitwardenSource{}}
 	store.mu.Lock()
 	if !store.privacyLocked {
 		t.Fatal("expected locked store")
@@ -148,13 +148,60 @@ func TestSessionIsolationHidesCodesFromOtherTabs(t *testing.T) {
 		bitwardenSource:   &bitwardenSource{},
 		maxAge:            time.Hour,
 		inactivityTimeout: 5 * time.Minute,
-		sessions:          map[string]time.Time{owner: now.Add(5 * time.Minute)},
+		sessions:          map[string]sessionAccess{owner: {ExpiresAt: now.Add(5 * time.Minute), Vault: true}},
 	}
 	if got := store.snapshot(owner); got.PrivacyLocked || len(got.Items) != 2 {
 		t.Fatalf("owner locked=%v items=%d", got.PrivacyLocked, len(got.Items))
 	}
 	if got := store.snapshot(other); !got.PrivacyLocked || len(got.Items) != 0 {
 		t.Fatalf("other locked=%v items=%d", got.PrivacyLocked, len(got.Items))
+	}
+}
+
+func TestPasskeySessionCannotSeeVaultCodes(t *testing.T) {
+	now := time.Now().UTC()
+	session := "passkey-session-id-123456789012345"
+	store := &store{
+		items:           []otpItem{{ID: "sms:1", Code: "123456", Source: "sms", ReceivedAt: now}},
+		totpItems:       []totpItem{{ID: "totp", Secret: []byte("secret"), Period: 30, Digits: 6, Algorithm: "SHA1"}},
+		status:          map[string]sourceStatus{"bitwarden": {OK: true}},
+		bitwardenSource: &bitwardenSource{},
+		passkeys:        &passkeyManager{},
+		maxAge:          time.Hour,
+		sessions:        map[string]sessionAccess{session: {ExpiresAt: now.Add(5 * time.Minute)}},
+	}
+	got := store.snapshot(session)
+	if got.PrivacyLocked || len(got.Items) != 1 || got.Items[0].Source != "sms" {
+		t.Fatalf("locked=%v items=%+v", got.PrivacyLocked, got.Items)
+	}
+	if !got.Sources["bitwarden"].RequiresUnlock {
+		t.Fatal("passkey session inherited Bitwarden access")
+	}
+}
+
+func TestVaultLocksWhilePasskeySessionRemains(t *testing.T) {
+	locked := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		locked = true
+		fmt.Fprint(w, `{"success":true,"data":{}}`)
+	}))
+	defer server.Close()
+
+	now := time.Now().UTC()
+	store := &store{
+		items:           []otpItem{{ID: "sms:1", Source: "sms"}},
+		totpItems:       []totpItem{{ID: "totp"}},
+		status:          map[string]sourceStatus{"bitwarden": {OK: true}},
+		bitwardenSource: &bitwardenSource{baseURL: server.URL, client: server.Client()},
+		passkeys:        &passkeyManager{},
+		sessions: map[string]sessionAccess{
+			"expired-vault-session-1234567890":  {ExpiresAt: now.Add(-time.Second), Vault: true},
+			"active-passkey-session-1234567890": {ExpiresAt: now.Add(time.Minute)},
+		},
+	}
+	store.expireInactive(context.Background(), now)
+	if !locked || store.privacyLocked || len(store.items) != 1 || len(store.totpItems) != 0 {
+		t.Fatalf("locked=%v privacyLocked=%v items=%d totp=%d", locked, store.privacyLocked, len(store.items), len(store.totpItems))
 	}
 }
 

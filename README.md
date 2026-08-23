@@ -24,6 +24,18 @@ It rebuilds the frontend with `tsgo` and restarts the Go server when Go, TypeScr
 
 The service discovers both Rostack implementations, polls their collection snapshots every 15 seconds, and serves the UI on port 3000. See `.env.example` for optional endpoint and timing configuration.
 
+## Passkey login
+
+Set `PASSKEY_SETUP_TOKEN` to a long random value to enable passkey authentication. On the first visit, enter that token and register a passkey. The service derives the WebAuthn RP ID and origin from the first HTTPS request, requires `Origin` to match `Host`, and pins both values in `PASSKEY_DATA_FILE` with the credential public key. Plain HTTP is accepted only on localhost.
+
+```sh
+openssl rand -base64 32
+```
+
+The passkey file must survive application restarts. It contains the WebAuthn user handle and public credential data, not a private key. Back it up as authentication state and keep it writable only by the service account. The setup endpoint closes after the first passkey is enrolled. Removing `PASSKEY_SETUP_TOKEN` afterward is still recommended; existing passkey login continues to work.
+
+Passkey login opens received SMS and mail codes but leaves Bitwarden locked. Entering the Bitwarden master password from either the login screen or the authenticator panel unlocks both the workspace and vault TOTP. Passkey credentials cannot decrypt Bitwarden, so the vault password is still requested separately when needed.
+
 ## Bitwarden TOTP
 
 Set `BITWARDEN_API_URL` to a logged-in [Bitwarden CLI `bw serve`](https://bitwarden.com/help/cli/) endpoint. The browser prompts for the master password when the vault is locked. The backend forwards it once to Bitwarden's `/unlock` endpoint and does not retain it.
@@ -72,15 +84,15 @@ Set `BW_CLIENTID` and `BW_CLIENTSECRET` to the personal API key values from Bitw
 
 ### Non-persistence
 
-Both containers use read-only root filesystems. Bitwarden CLI configuration, encrypted vault cache, login state, and optional CA material live only in a `tmpfs` mounted at `/data`. OTP records and parsed TOTP seeds exist only in Go process memory. There are no named volumes, databases, browser storage, or host bind mounts. Restarting the containers erases all runtime state and requires Bitwarden API-key login and master-password unlock again.
+Both containers use read-only root filesystems. Bitwarden CLI configuration, encrypted vault cache, login state, and optional CA material live only in a `tmpfs` mounted at `/data`. OTP records and parsed TOTP seeds exist only in Go process memory. Passkey public credentials are the sole persistent application state and live in the configured passkey data file or volume. Restarting the containers erases runtime OTP and vault state and requires a new passkey or Bitwarden login.
 
 Only 4-8 digit values near verification terminology are accepted. Codes older than `OTP_MAX_AGE_MS` are discarded.
 
 After five minutes without pointer, keyboard, touch, or scroll activity, the server locks Bitwarden, erases received OTPs and cached TOTP seeds, and prevents polling from repopulating codes. The user must enter the master password again. Configure the deadline with `INACTIVITY_TIMEOUT_MS`.
 
-When Bitwarden is configured, its master-password unlock protects the entire workspace. Received SMS/mail OTPs are not collected into the visible in-memory store until the vault has been unlocked, and both received OTPs and TOTP codes are cleared together when the workspace locks.
+When passkeys are disabled, the Bitwarden master-password unlock protects the entire workspace as before. When passkeys are enabled, either a passkey or the master password opens received SMS/mail OTPs, while only the master password opens Bitwarden TOTP. Received OTPs and parsed TOTP seeds are cleared together when all browser sessions expire.
 
-Each browser tab creates a random capability in `sessionStorage`. The backend authorizes only the tab that submitted the successful master-password unlock and requires that capability on snapshots, refreshes, activity reports, and realtime streams. Other tabs and browsers remain locked and receive no OTP or TOTP data even while the shared Bitwarden sidecar process is unlocked. Closing the tab discards its capability.
+Each browser tab creates a random capability in `sessionStorage`. The backend authorizes only tabs that complete passkey verification or submit the successful master-password unlock and requires that capability on snapshots, refreshes, activity reports, and realtime streams. Other tabs and browsers remain locked. Closing the tab discards its capability.
 
 Run backend tests with `go test ./...`. The Docker build compiles both TypeScript and Go and produces a minimal runtime image containing only the application binary and CA certificates.
 

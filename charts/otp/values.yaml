@@ -86,6 +86,12 @@ bitwarden:
     runAsGroup: 10001
   resources: {}
 
+passkey:
+  enabled: false
+  existingClaim: ""
+  storageClass: ""
+  size: 1Mi
+
 secrets:
   existingSecret: ""
   connectRostackToken: ""
@@ -93,6 +99,7 @@ secrets:
   bitwardenApiToken: ""
   bitwardenClientId: ""
   bitwardenClientSecret: ""
+  passkeySetupToken: ""
 
 sealedSecret:
   enabled: false
@@ -103,6 +110,7 @@ sealedSecret:
     BITWARDEN_API_TOKEN: ""
     BW_CLIENTID: ""
     BW_CLIENTSECRET: ""
+    PASSKEY_SETUP_TOKEN: ""
 
 resources: {}
 

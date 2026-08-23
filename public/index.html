@@ -71,19 +71,30 @@
         </section>
 
         <section id="unlock-overlay" class="unlock-overlay" hidden aria-labelledby="unlock-title">
-          <form id="unlock" class="unlock-panel">
+          <div class="unlock-panel">
             <div class="dialog-icon">⌾</div>
             <p class="eyebrow">Protected workspace</p>
-            <h2 id="unlock-title">Unlock verification codes</h2>
-            <p class="dialog-copy">Enter your Bitwarden master password to open received OTPs and authenticator codes. It is forwarded once to your private vault sidecar and never stored.</p>
-            <label>
-              <span>Master password</span>
-              <input id="master-password" name="password" type="password" autocomplete="current-password" placeholder="Enter master password" required>
-            </label>
-            <button type="submit">Unlock workspace</button>
+            <h2 id="unlock-title">Sign in to Code Relay</h2>
+            <p id="unlock-copy" class="dialog-copy">Use your passkey or Bitwarden master password to open the workspace.</p>
+            <button id="passkey-login" type="button">Sign in with passkey</button>
+            <form id="passkey-setup" hidden>
+              <label>
+                <span>Passkey setup token</span>
+                <input id="setup-token" name="setupToken" type="password" autocomplete="off" placeholder="Enter setup token" required>
+              </label>
+              <button type="submit">Create first passkey</button>
+            </form>
+            <div id="login-divider" class="login-divider"><span>or use Bitwarden</span></div>
+            <form id="bitwarden-login">
+              <label>
+                <span>Bitwarden master password</span>
+                <input id="login-master-password" name="password" type="password" autocomplete="current-password" placeholder="Enter master password" required>
+              </label>
+              <button type="submit">Unlock everything</button>
+            </form>
             <p id="unlock-error" role="alert"></p>
-            <div class="dialog-security"><span>◈</span><p><b>Ephemeral by design</b>Your password, OTPs, and vault data exist only in memory and are erased after inactivity.</p></div>
-          </form>
+            <div class="dialog-security"><span>◈</span><p><b>Separate vault protection</b>A passkey opens received codes. Your Bitwarden password is requested separately for vault TOTP and is never stored.</p></div>
+          </div>
         </section>
 
         <div class="boards">
@@ -107,6 +118,12 @@
               </div>
               <span class="board-count"><b id="totp-count">0</b> available</span>
             </div>
+            <form id="vault-unlock" class="vault-unlock" hidden>
+              <div><b>Bitwarden is locked</b><span>Enter the vault master password to show authenticator codes.</span></div>
+              <input id="vault-master-password" type="password" autocomplete="current-password" placeholder="Master password" aria-label="Bitwarden master password" required>
+              <button type="submit">Unlock vault</button>
+              <p id="vault-unlock-error" role="alert"></p>
+            </form>
             <div id="totp-codes" class="codes" aria-live="polite"></div>
             <div id="totp-empty" class="empty" hidden><span>◌</span><h3>No authenticator codes</h3><p>Unlock Bitwarden to display live TOTP codes from your vault.</p></div>
           </section>

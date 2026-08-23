@@ -52,6 +52,15 @@ spec:
               value: {{ .Values.config.otpMaxAgeMs | int64 | quote }}
             - name: INACTIVITY_TIMEOUT_MS
               value: {{ .Values.config.inactivityTimeoutMs | int64 | quote }}
+            {{- if .Values.passkey.enabled }}
+            - name: PASSKEY_DATA_FILE
+              value: /data/passkeys.json
+            - name: PASSKEY_SETUP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "otp.secretName" . }}
+                  key: PASSKEY_SETUP_TOKEN
+            {{- end }}
             {{- if .Values.bitwarden.enabled }}
             - name: BITWARDEN_API_URL
               value: http://127.0.0.1:8087
@@ -89,6 +98,11 @@ spec:
             {{- toYaml .Values.readinessProbe | nindent 12 }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+          {{- if .Values.passkey.enabled }}
+          volumeMounts:
+            - name: passkey-data
+              mountPath: /data
+          {{- end }}
         {{- if .Values.bitwarden.enabled }}
         - name: bitwarden-cli
           securityContext:
@@ -126,8 +140,14 @@ spec:
             - name: bitwarden-tmp
               mountPath: /tmp
         {{- end }}
-      {{- if .Values.bitwarden.enabled }}
+      {{- if or .Values.bitwarden.enabled .Values.passkey.enabled }}
       volumes:
+        {{- if .Values.passkey.enabled }}
+        - name: passkey-data
+          persistentVolumeClaim:
+            claimName: {{ default (printf "%s-passkey" (include "otp.fullname" .)) .Values.passkey.existingClaim }}
+        {{- end }}
+        {{- if .Values.bitwarden.enabled }}
         - name: bitwarden-data
           emptyDir:
             medium: Memory
@@ -136,6 +156,7 @@ spec:
           emptyDir:
             medium: Memory
             sizeLimit: 16Mi
+        {{- end }}
       {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:

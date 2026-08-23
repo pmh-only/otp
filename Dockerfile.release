@@ -1,9 +1,11 @@
 FROM alpine:3.24 AS certificates
+RUN mkdir /passkey-data && chown 65532:65532 /passkey-data
 
 FROM scratch
 ARG TARGETARCH
 COPY --from=certificates /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --chmod=755 dist/linux/${TARGETARCH}/otp-inbox /otp-inbox
+COPY --from=certificates --chown=65532:65532 /passkey-data /data
 USER 65532:65532
 EXPOSE 3000
 ENTRYPOINT ["/otp-inbox"]

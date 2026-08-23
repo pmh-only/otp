@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.0](https://github.com/pmh-only/otp/compare/v0.3.0...v0.4.0) (2026-08-23)
+
+
+### Features
+
+* add passkey authentication ([2baf2e3](https://github.com/pmh-only/otp/commit/2baf2e3ea6c6cf7a85b9cfc0bedfca28804033ac))
+
+
+### Bug Fixes
+
+* harden passkey enrollment ([f3a802c](https://github.com/pmh-only/otp/commit/f3a802c3ce647ce517e6f055cfcefa9f647e5ef6))
+* preserve legacy passkey configuration ([dd231e7](https://github.com/pmh-only/otp/commit/dd231e7ab07fdefe262128d8cfa2bb2caceccd91))
+
 ## [0.3.0](https://github.com/pmh-only/otp/compare/v0.2.1...v0.3.0) (2026-08-13)
 
 

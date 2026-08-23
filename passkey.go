@@ -52,15 +52,18 @@ type passkeyManager struct {
 	ceremonies map[string]passkeyCeremony
 }
 
-func newPasskeyManager(path, setupToken string, enabled bool) (*passkeyManager, error) {
-	if !enabled {
+func newPasskeyManager(path, setupToken string, enabled *bool) (*passkeyManager, error) {
+	if enabled != nil && !*enabled {
 		return nil, nil
 	}
 	manager := &passkeyManager{path: path, setupToken: setupToken, ceremonies: make(map[string]passkeyCeremony)}
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		if setupToken == "" {
-			return nil, errors.New("passkey authentication is enabled but credential data and setup token are missing")
+			if enabled != nil {
+				return nil, errors.New("passkey authentication is enabled but credential data and setup token are missing")
+			}
+			return nil, nil
 		}
 		return manager, nil
 	}

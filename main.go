@@ -33,7 +33,7 @@ type config struct {
 	BitwardenToken    string
 	PasskeyDataFile   string
 	PasskeySetupToken string
-	PasskeyEnabled    bool
+	PasskeyEnabled    *bool
 	InactivityTimeout time.Duration
 }
 
@@ -616,7 +616,7 @@ func readConfig() (config, error) {
 	bitwardenURL := strings.TrimRight(os.Getenv("BITWARDEN_API_URL"), "/")
 	bitwardenToken := os.Getenv("BITWARDEN_API_TOKEN")
 	passkeyDataFile := envOr("PASSKEY_DATA_FILE", "passkeys.json")
-	passkeyEnabled, err := booleanEnv("PASSKEY_ENABLED", false)
+	passkeyEnabled, err := optionalBooleanEnv("PASSKEY_ENABLED")
 	if err != nil {
 		return config{}, err
 	}
@@ -654,16 +654,16 @@ func positiveInt(name string, fallback int) (int, error) {
 	return parsed, nil
 }
 
-func booleanEnv(name string, fallback bool) (bool, error) {
+func optionalBooleanEnv(name string) (*bool, error) {
 	value, exists := os.LookupEnv(name)
 	if !exists || value == "" {
-		return fallback, nil
+		return nil, nil
 	}
 	parsed, err := strconv.ParseBool(value)
 	if err != nil {
-		return false, fmt.Errorf("%s must be a boolean", name)
+		return nil, fmt.Errorf("%s must be a boolean", name)
 	}
-	return parsed, nil
+	return &parsed, nil
 }
 
 func loadDotEnv(path string) error {

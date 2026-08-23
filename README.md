@@ -32,7 +32,7 @@ Set `PASSKEY_ENABLED=true` and provide a long random `PASSKEY_SETUP_TOKEN` for i
 openssl rand -base64 32
 ```
 
-The passkey file must survive application restarts. It contains the WebAuthn user handle and public credential data, not a private key. Back it up as authentication state and keep it writable only by the service account. The setup endpoint closes after the first passkey is enrolled. Removing `PASSKEY_SETUP_TOKEN` afterward is still recommended; keep `PASSKEY_ENABLED=true` so a missing or mis-mounted credential file causes startup to fail instead of disabling authentication.
+The passkey file must survive application restarts. It contains the WebAuthn user handle and public credential data, not a private key. Back it up as authentication state and keep it writable only by the service account. The setup endpoint closes after the first passkey is enrolled. Removing `PASSKEY_SETUP_TOKEN` afterward is still recommended; keep `PASSKEY_ENABLED=true` so a missing or mis-mounted credential file causes startup to fail instead of disabling authentication. For upgrades from versions without `PASSKEY_ENABLED`, an unset value still enables passkeys when either the setup token or credential file exists; set it explicitly after upgrading.
 
 Passkey login opens received SMS and mail codes but leaves Bitwarden locked. Entering the Bitwarden master password from either the login screen or the authenticator panel unlocks both the workspace and vault TOTP. Passkey credentials cannot decrypt Bitwarden, so the vault password is still requested separately when needed.
 

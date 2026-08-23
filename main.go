@@ -31,6 +31,8 @@ type config struct {
 	MailToken         string
 	BitwardenURL      string
 	BitwardenToken    string
+	PasskeyDataFile   string
+	PasskeySetupToken string
 	InactivityTimeout time.Duration
 }
 
@@ -82,10 +84,12 @@ type sourceStatus struct {
 }
 
 type snapshot struct {
-	Items         []otpItem               `json:"items"`
-	Sources       map[string]sourceStatus `json:"sources"`
-	RefreshedAt   time.Time               `json:"refreshedAt"`
-	PrivacyLocked bool                    `json:"privacyLocked"`
+	Items             []otpItem               `json:"items"`
+	Sources           map[string]sourceStatus `json:"sources"`
+	RefreshedAt       time.Time               `json:"refreshedAt"`
+	PrivacyLocked     bool                    `json:"privacyLocked"`
+	PasskeyEnabled    bool                    `json:"passkeyEnabled"`
+	PasskeyConfigured bool                    `json:"passkeyConfigured"`
 }
 
 type store struct {
@@ -97,10 +101,16 @@ type store struct {
 	smsSource         *rostackSource
 	mailSource        *rostackSource
 	bitwardenSource   *bitwardenSource
+	passkeys          *passkeyManager
 	totpItems         []totpItem
 	inactivityTimeout time.Duration
 	privacyLocked     bool
-	sessions          map[string]time.Time
+	sessions          map[string]sessionAccess
+}
+
+type sessionAccess struct {
+	ExpiresAt time.Time
+	Vault     bool
 }
 
 func main() {
@@ -113,14 +123,20 @@ func main() {
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
+	passkeys, err := newPasskeyManager(cfg.PasskeyDataFile, cfg.PasskeySetupToken)
+	if err != nil {
+		log.Fatal(err)
+	}
 	store := &store{
 		maxAge:            cfg.MaxAge,
 		status:            map[string]sourceStatus{"sms": {}, "mail": {}, "bitwarden": {}},
 		smsSource:         &rostackSource{discoveryURL: cfg.ConnectURL, token: cfg.ConnectToken, resourceName: "sms-messages", client: client},
 		mailSource:        &rostackSource{discoveryURL: cfg.MailURL, token: cfg.MailToken, resourceName: "mailbox-entries", client: client},
 		inactivityTimeout: cfg.InactivityTimeout,
-		sessions:          make(map[string]time.Time),
+		sessions:          make(map[string]sessionAccess),
+		passkeys:          passkeys,
 	}
+	store.privacyLocked = passkeys != nil
 	if cfg.BitwardenURL != "" {
 		store.bitwardenSource = &bitwardenSource{baseURL: cfg.BitwardenURL, token: cfg.BitwardenToken, client: client}
 		store.privacyLocked = true
@@ -193,6 +209,56 @@ func main() {
 		store.refresh(r.Context())
 		writeJSON(w, http.StatusOK, store.snapshot(id))
 	})
+	if passkeys != nil {
+		mux.HandleFunc("POST /api/passkeys/register/start", func(w http.ResponseWriter, r *http.Request) {
+			r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+			var input struct {
+				SetupToken string `json:"setupToken"`
+			}
+			if r.Header.Get("Content-Type") != "application/json" || json.NewDecoder(r.Body).Decode(&input) != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Setup token is required"})
+				return
+			}
+			options, err := passkeys.beginRegistration(r, sessionID(r), input.SetupToken)
+			if err != nil {
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSON(w, http.StatusOK, options)
+		})
+		mux.HandleFunc("POST /api/passkeys/register/finish", func(w http.ResponseWriter, r *http.Request) {
+			r.Body = http.MaxBytesReader(w, r.Body, 128<<10)
+			id := sessionID(r)
+			if err := passkeys.finishRegistration(r, id); err != nil {
+				log.Printf("passkey registration failed: %v", err)
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Unable to register passkey"})
+				return
+			}
+			store.unlockWorkspace(id, time.Now().UTC())
+			store.refresh(r.Context())
+			writeJSON(w, http.StatusOK, store.snapshot(id))
+		})
+		mux.HandleFunc("POST /api/passkeys/login/start", func(w http.ResponseWriter, r *http.Request) {
+			options, err := passkeys.beginLogin(r, sessionID(r))
+			if err != nil {
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSON(w, http.StatusOK, options)
+		})
+		mux.HandleFunc("POST /api/passkeys/login/finish", func(w http.ResponseWriter, r *http.Request) {
+			r.Body = http.MaxBytesReader(w, r.Body, 128<<10)
+			id := sessionID(r)
+			if err := passkeys.finishLogin(r, id); err != nil {
+				log.Printf("passkey verification failed: %v", err)
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Unable to verify passkey"})
+				return
+			}
+			store.unlockWorkspace(id, time.Now().UTC())
+			store.refresh(r.Context())
+			writeJSON(w, http.StatusOK, store.snapshot(id))
+		})
+	}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	})
@@ -326,12 +392,15 @@ func (s *store) snapshot(session string) snapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	authorized := s.sessionAuthorizedLocked(session, time.Now().UTC())
+	vaultAuthorized := s.sessionVaultAuthorizedLocked(session, time.Now().UTC())
 	s.pruneLocked()
 	items := []otpItem{}
 	if authorized {
 		items = append(items, s.items...)
-		for _, item := range s.totpItems {
-			items = append(items, item.code(time.Now().UTC()))
+		if vaultAuthorized {
+			for _, item := range s.totpItems {
+				items = append(items, item.code(time.Now().UTC()))
+			}
 		}
 	}
 	sort.Slice(items, func(i, j int) bool {
@@ -353,15 +422,21 @@ func (s *store) snapshot(session string) snapshot {
 	if !authorized && s.bitwardenSource != nil {
 		checkedAt := time.Now().UTC()
 		statuses["bitwarden"] = sourceStatus{CheckedAt: &checkedAt, Error: errBitwardenLocked.Error(), RequiresUnlock: true}
+	} else if authorized && !vaultAuthorized && s.bitwardenSource != nil {
+		checkedAt := time.Now().UTC()
+		statuses["bitwarden"] = sourceStatus{CheckedAt: &checkedAt, Error: errBitwardenLocked.Error(), RequiresUnlock: true}
 	}
-	return snapshot{Items: items, Sources: statuses, RefreshedAt: time.Now().UTC(), PrivacyLocked: !authorized && s.bitwardenSource != nil}
+	privacyLocked := !authorized && (s.bitwardenSource != nil || s.passkeys != nil)
+	return snapshot{Items: items, Sources: statuses, RefreshedAt: time.Now().UTC(), PrivacyLocked: privacyLocked, PasskeyEnabled: s.passkeys != nil, PasskeyConfigured: s.passkeys.configured()}
 }
 
 func (s *store) recordActivity(session string, at time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.sessionAuthorizedLocked(session, at) {
-		s.sessions[session] = at.Add(s.inactivityTimeout)
+		access := s.sessions[session]
+		access.ExpiresAt = at.Add(s.inactivityTimeout)
+		s.sessions[session] = access
 	}
 }
 
@@ -369,18 +444,39 @@ func (s *store) unlockPrivacy(session string, at time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.privacyLocked = false
-	s.sessions[session] = at.Add(s.inactivityTimeout)
+	s.sessions[session] = sessionAccess{ExpiresAt: at.Add(s.inactivityTimeout), Vault: true}
+}
+
+func (s *store) unlockWorkspace(session string, at time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.privacyLocked = false
+	s.sessions[session] = sessionAccess{ExpiresAt: at.Add(s.inactivityTimeout)}
 }
 
 func (s *store) expireInactive(ctx context.Context, now time.Time) {
 	s.mu.Lock()
-	for id, expiresAt := range s.sessions {
-		if !expiresAt.After(now) {
+	for id, access := range s.sessions {
+		if !access.ExpiresAt.After(now) {
 			delete(s.sessions, id)
 		}
 	}
-	if s.privacyLocked || len(s.sessions) > 0 {
+	if s.privacyLocked {
 		s.mu.Unlock()
+		return
+	}
+	if len(s.sessions) > 0 {
+		if s.hasVaultSessionLocked(now) || s.bitwardenSource == nil || s.status["bitwarden"].RequiresUnlock {
+			s.mu.Unlock()
+			return
+		}
+		s.totpItems = nil
+		checkedAt := now.UTC()
+		s.status["bitwarden"] = sourceStatus{CheckedAt: &checkedAt, Error: errBitwardenLocked.Error(), RequiresUnlock: true}
+		s.mu.Unlock()
+		if err := s.bitwardenSource.lock(ctx); err != nil {
+			log.Printf("Bitwarden lock failed: %v", err)
+		}
 		return
 	}
 	s.privacyLocked = true
@@ -406,8 +502,28 @@ func (s *store) authorized(session string, now time.Time) bool {
 }
 
 func (s *store) sessionAuthorizedLocked(session string, now time.Time) bool {
-	expiresAt, ok := s.sessions[session]
-	return ok && expiresAt.After(now)
+	if s.passkeys == nil && s.bitwardenSource == nil {
+		return true
+	}
+	access, ok := s.sessions[session]
+	return ok && access.ExpiresAt.After(now)
+}
+
+func (s *store) sessionVaultAuthorizedLocked(session string, now time.Time) bool {
+	if s.bitwardenSource == nil {
+		return false
+	}
+	access, ok := s.sessions[session]
+	return ok && access.Vault && access.ExpiresAt.After(now)
+}
+
+func (s *store) hasVaultSessionLocked(now time.Time) bool {
+	for _, access := range s.sessions {
+		if access.Vault && access.ExpiresAt.After(now) {
+			return true
+		}
+	}
+	return false
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
@@ -498,11 +614,13 @@ func readConfig() (config, error) {
 	}
 	bitwardenURL := strings.TrimRight(os.Getenv("BITWARDEN_API_URL"), "/")
 	bitwardenToken := os.Getenv("BITWARDEN_API_TOKEN")
+	passkeyDataFile := envOr("PASSKEY_DATA_FILE", "passkeys.json")
 	return config{
 		Port: port, PollInterval: time.Duration(poll) * time.Millisecond, MaxAge: time.Duration(maxAge) * time.Millisecond,
 		ConnectURL: envOr("CONNECT_DISCOVERY_URL", "http://connect-service.connect.svc.cluster.local:8080/.well-known/rostack"), ConnectToken: connectToken,
 		MailURL: envOr("MAIL_DISCOVERY_URL", "http://mailui.mail.svc.cluster.local:3000/.well-known/rostack"), MailToken: mailToken,
 		BitwardenURL: bitwardenURL, BitwardenToken: bitwardenToken,
+		PasskeyDataFile: passkeyDataFile, PasskeySetupToken: os.Getenv("PASSKEY_SETUP_TOKEN"),
 		InactivityTimeout: time.Duration(inactivity) * time.Millisecond,
 	}, nil
 }

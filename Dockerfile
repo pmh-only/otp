@@ -1,7 +1,8 @@
 FROM golang:1.26-alpine AS build
 WORKDIR /src
 RUN go install github.com/microsoft/typescript-go/cmd/tsgo@latest
-COPY go.mod tsconfig.json ./
+COPY go.mod go.sum tsconfig.json ./
+RUN go mod download
 COPY frontend ./frontend
 COPY public ./public
 RUN tsgo -p tsconfig.json

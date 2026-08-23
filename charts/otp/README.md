@@ -17,6 +17,22 @@ helm upgrade --install otp otp-inbox/otp-inbox \
 
 Alternatively, set `secrets.connectRostackToken` and `secrets.mailRostackToken` to let Helm create the Secret. Prefer an existing Secret in production so credentials are not stored in Helm release values.
 
+## Passkeys
+
+Enable passkeys and provide a long random setup token in the application Secret:
+
+```yaml
+passkey:
+  enabled: true
+
+secrets:
+  existingSecret: otp-secrets
+```
+
+The Secret must contain `PASSKEY_SETUP_TOKEN`. When Helm creates it, set `secrets.passkeySetupToken`; Sealed Secret users must provide `PASSKEY_SETUP_TOKEN` under `sealedSecret.encryptedData`. The chart creates a retained 1 MiB PVC for passkey public credential state. Set `passkey.existingClaim` to use a pre-provisioned claim, or configure `passkey.storageClass` and `passkey.size` for the generated claim.
+
+WebAuthn uses the HTTPS host of the first registration as its permanent RP ID and origin. Complete first registration through the final public hostname; changing that hostname later requires restoring or replacing the passkey data file and registering new passkeys.
+
 ## Bitwarden
 
 Enable the chart-managed Bitwarden CLI sidecar and provide its personal API key through the same Secret:

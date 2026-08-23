@@ -1,0 +1,19 @@
+{{- if and .Values.passkey.enabled (not .Values.passkey.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "otp.fullname" . }}-passkey
+  labels:
+    {{- include "otp.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- with .Values.passkey.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.passkey.size }}
+{{- end }}
